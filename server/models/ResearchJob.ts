@@ -42,6 +42,25 @@ export interface IResearchJobError {
   at: Date;
 }
 
+/**
+ * Theo dõi chi phí THẬT của job - hệ thống này tiêu tiền thật mỗi lần chạy
+ * (Apify + Gemini), đây là yêu cầu vận hành, không phải tính năng phụ.
+ * apifyEstimatedUsd/geminiEstimatedUsd: ước tính TRƯỚC khi gọi (log để cảnh
+ * báo sớm). apifyActualUsd: chi phí THẬT đọc qua Apify Actor API sau khi
+ * chạy (xem tiktokService.ts::fetchApifyRunCost). geminiEstimatedUsd: Gemini
+ * không có endpoint tra chi phí thật sau khi gọi như Apify, nên vẫn là ước
+ * tính dựa trên token usage x đơn giá published của model - không có
+ * "geminiActualUsd" tương ứng.
+ */
+export interface IResearchJobCost {
+  apifyEstimatedUsd: number;
+  apifyActualUsd: number;
+  geminiInputTokens: number;
+  geminiOutputTokens: number;
+  geminiEstimatedUsd: number;
+  totalEstimatedUsd: number;
+}
+
 export interface IResearchJob extends Document {
   userId: Types.ObjectId;
   productId: Types.ObjectId;
@@ -56,6 +75,7 @@ export interface IResearchJob extends Document {
   resultIdeaIds: Types.ObjectId[];
   resultScriptIds: Types.ObjectId[];
   error?: IResearchJobError;
+  cost: IResearchJobCost;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -91,6 +111,14 @@ const researchJobSchema = new Schema<IResearchJob>(
       stage: String,
       message: String,
       at: Date,
+    },
+    cost: {
+      apifyEstimatedUsd: { type: Number, default: 0 },
+      apifyActualUsd: { type: Number, default: 0 },
+      geminiInputTokens: { type: Number, default: 0 },
+      geminiOutputTokens: { type: Number, default: 0 },
+      geminiEstimatedUsd: { type: Number, default: 0 },
+      totalEstimatedUsd: { type: Number, default: 0 },
     },
   },
   { timestamps: true }

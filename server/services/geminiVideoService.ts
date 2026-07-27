@@ -232,13 +232,46 @@ function resolveModel(template: PromptTemplateLike): string {
   return template.aiModel && template.aiModel.trim() !== '' ? template.aiModel : GEMINI_MODEL;
 }
 
+export interface GeminiUsage {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedUsd: number;
+}
+
+/**
+ * Giá đã verify qua https://ai.google.dev/gemini-api/docs/pricing
+ * (2026-07-27), KHÔNG đoán từ dữ liệu huấn luyện. Model không có trong bảng
+ * (ví dụ PromptTemplate.aiModel override sang model lạ) -> fallback về giá
+ * gemini-3.6-flash và log cảnh báo, để không âm thầm tính sai/tính thiếu.
+ */
+const GEMINI_PRICING_USD_PER_MILLION_TOKENS: Record<string, { input: number; output: number }> = {
+  'gemini-3.6-flash': { input: 1.5, output: 7.5 },
+  'gemini-2.5-flash': { input: 0.3, output: 2.5 },
+};
+
+function estimateGeminiCost(model: string, inputTokens: number, outputTokens: number): number {
+  const pricing = GEMINI_PRICING_USD_PER_MILLION_TOKENS[model];
+  const effectivePricing = pricing ?? GEMINI_PRICING_USD_PER_MILLION_TOKENS['gemini-3.6-flash'];
+
+  if (!pricing) {
+    console.warn(
+      `[Gemini] Không có giá đã verify cho model "${model}" - dùng tạm giá gemini-3.6-flash để ước tính, ` +
+        'có thể sai lệch so với chi phí thật.'
+    );
+  }
+
+  const cost = (inputTokens / 1_000_000) * effectivePricing.input + (outputTokens / 1_000_000) * effectivePricing.output;
+  return Math.round(cost * 1_000_000) / 1_000_000;
+}
+
 async function callGeminiStructured(params: {
   label: string;
   model: string;
   systemPrompt: string;
   temperature?: number;
   contents: ReturnType<typeof createUserContent>[];
-}): Promise<string> {
+}): Promise<{ text: string; usage: GeminiUsage }> {
   return withGeminiRetry(async () => {
     const client = getClient();
     const response = await client.models.generateContent({
@@ -262,7 +295,17 @@ async function callGeminiStructured(params: {
       throw new Error(`Gemini không trả về nội dung (finishReason: ${reason})`);
     }
 
-    return text;
+    const inputTokens = response.usageMetadata?.promptTokenCount ?? 0;
+    const outputTokens = response.usageMetadata?.candidatesTokenCount ?? 0;
+
+    const usage: GeminiUsage = {
+      model: params.model,
+      inputTokens,
+      outputTokens,
+      estimatedUsd: estimateGeminiCost(params.model, inputTokens, outputTokens),
+    };
+
+    return { text, usage };
   }, params.label);
 }
 
@@ -276,7 +319,7 @@ export async function analyzeVideo(params: {
   mimeType: string;
   template: PromptTemplateLike;
   context: VideoAnalysisContext;
-}): Promise<VideoAnalysis> {
+}): Promise<{ analysis: VideoAnalysis; usage: GeminiUsage }> {
   const { filePath, mimeType, template, context } = params;
 
   const fileUri = await uploadVideoToGemini(filePath, mimeType);
@@ -289,7 +332,7 @@ export async function analyzeVideo(params: {
       transcript: context.transcript || '(không có transcript)',
     });
 
-    const raw = await callGeminiStructured({
+    const { text: raw, usage } = await callGeminiStructured({
       label: 'analyzeVideo',
       model: resolveModel(template),
       systemPrompt: template.systemPrompt,
@@ -300,7 +343,7 @@ export async function analyzeVideo(params: {
     const parsed: unknown = JSON.parse(raw);
     const validated = VideoAnalysisSchema.omit({ analysisConfidence: true }).parse(parsed);
 
-    return { ...validated, analysisConfidence: 'high' };
+    return { analysis: { ...validated, analysisConfidence: 'high' }, usage };
   } finally {
     await deleteGeminiFile(fileUri);
   }
@@ -315,7 +358,7 @@ export async function analyzeVideo(params: {
 export async function analyzeFromTextOnly(params: {
   context: TextOnlyAnalysisContext;
   template: PromptTemplateLike;
-}): Promise<VideoAnalysis> {
+}): Promise<{ analysis: VideoAnalysis; usage: GeminiUsage }> {
   const { context, template } = params;
 
   const userPrompt = fillTemplate(template.userPromptTemplate, {
@@ -335,7 +378,7 @@ export async function analyzeFromTextOnly(params: {
     'LƯU Ý QUAN TRỌNG: Không có file video để xem - chỉ có caption, hashtag, bình luận, và transcript/phụ đề (nếu có). Với các field chỉ có thể suy luận được từ hình ảnh thực tế của video (visualHook, production.shotTypes, production.lighting, production.props, production.textOnScreen), hãy để TRỐNG (chuỗi rỗng "" hoặc mảng rỗng []) thay vì bịa đặt.',
   ].join('\n\n');
 
-  const raw = await callGeminiStructured({
+  const { text: raw, usage } = await callGeminiStructured({
     label: 'analyzeFromTextOnly',
     model: resolveModel(template),
     systemPrompt: template.systemPrompt,
@@ -346,5 +389,5 @@ export async function analyzeFromTextOnly(params: {
   const parsed: unknown = JSON.parse(raw);
   const validated = VideoAnalysisSchema.omit({ analysisConfidence: true }).parse(parsed);
 
-  return { ...validated, analysisConfidence: 'low' };
+  return { analysis: { ...validated, analysisConfidence: 'low' }, usage };
 }

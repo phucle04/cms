@@ -2,42 +2,170 @@ import { TikTokVideo } from '../types';
 import { ApifyTikTokResult, NormalizedTrendVideo } from '../types/apify';
 import { APIFY_KV_STORE_NAME, APIFY_DISCOVERY_LIMIT } from '../config/env';
 
-// Endpoint actor dùng cho luồng research thật (Giai đoạn 2) - đúng URL
-// tiktok-ai/app/src/lib/apify.ts đang dùng thực tế, KHÁC với endpoint
-// `run-sync` cũ ở searchByHashtagsLegacy() bên dưới (endpoint đó chưa từng
-// được verify khớp actor schema thật).
-const HASHTAG_SEARCH_URL =
-  'https://api.apify.com/v2/acts/clockworks~tiktok-scraper/run-sync-get-dataset-items';
+const ACTOR_ID = 'clockworks~tiktok-scraper';
+const ACTOR_RUNS_URL = `https://api.apify.com/v2/acts/${ACTOR_ID}/runs`;
+const actorRunStatusUrl = (runId: string) => `https://api.apify.com/v2/actor-runs/${runId}`;
+const datasetItemsUrl = (datasetId: string) => `https://api.apify.com/v2/datasets/${datasetId}/items`;
+
+// Endpoint SYNC cũ - vẫn dùng cho fetchTopComments() (chưa cần track runId/cost
+// chính xác ở đó, xem ghi chú tại hàm đó). PASS 1/PASS 2 KHÔNG dùng endpoint
+// này nữa (xem runApifyActor) vì nó không trả runId đáng tin cậy - đã verify
+// thật: header `x-apify-run-id` KHÔNG tồn tại trong response (2026-07-27).
+const HASHTAG_SEARCH_URL = `https://api.apify.com/v2/acts/${ACTOR_ID}/run-sync-get-dataset-items`;
 
 function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
   return fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+interface ApifyRunOutcome {
+  runId: string;
+  datasetId: string;
+  status: string;
+  items: ApifyTikTokResult[];
+}
+
+interface ApifyRunApiResponse {
+  data?: {
+    id?: string;
+    defaultDatasetId?: string;
+    status?: string;
+    usageTotalUsd?: number;
+  };
+}
+
+const TERMINAL_STATUSES = ['SUCCEEDED', 'FAILED', 'TIMED-OUT', 'ABORTED'];
+
 /**
- * Đơn giá ước tính (USD/item), suy ra từ các lần chạy thật với actor
- * clockworks~tiktok-scraper (đo ngày 2026-07-27, hashtag 'sữacôngthức'):
- *  - PASS 1 discover (hashtag mode, 30 item, shouldDownloadVideos=false):
- *    tổng $0.1510 -> $0.1510 / 30 ≈ $0.00503/item.
- *  - So sánh bản 1-pass CŨ (30 item, CÓ tải video: $0.1783 tổng) với PASS 1
- *    ở trên (30 item, không tải: $0.1510) -> phần cộng thêm do tải video =
- *    $0.0273, chia cho ~24/30 item có downloadAddr (tỉ lệ ~80% quan sát được
- *    ở các lần chạy khác, actor không phải lúc nào cũng tải được video) ->
- *    ~$0.0273 / 24 ≈ $0.00114/item tải thành công.
- *
- * CẢNH BÁO: đây là ước tính THÔ để LOG tham khảo trước khi chạy job, KHÔNG
- * PHẢI cam kết billing chính xác - giá Apify thật phụ thuộc proxy dùng, độ
- * phức tạp trang, và có thể đổi theo thời gian/actor version. Luôn đối chiếu
- * với hoá đơn Apify thật (GET /v2/actor-runs?token=...) để biết chi phí
- * chính xác, đừng dùng số này để quyết định billing.
+ * Chạy actor bằng API BẤT ĐỒNG BỘ (start run -> poll status -> đọc dataset),
+ * KHÔNG dùng run-sync-get-dataset-items. Lý do: đã verify thật (2026-07-27)
+ * là run-sync-get-dataset-items không trả runId ở đâu cả (không có header
+ * x-apify-run-id, body chỉ là mảng item trần) - không có cách nào tra chi phí
+ * thật của 1 lần gọi cụ thể nếu dùng endpoint đó. API bất đồng bộ trả `data.id`
+ * ngay khi start, dùng để tra chi phí thật sau (xem fetchApifyRunCost).
  */
-const PRICE_PER_DISCOVERY_ITEM_USD = 0.00503;
-const PRICE_PER_DOWNLOAD_ITEM_USD = 0.00114;
+async function runApifyActor(
+  token: string,
+  input: Record<string, unknown>,
+  opts: { label: string; timeoutMs?: number; pollIntervalMs?: number }
+): Promise<ApifyRunOutcome> {
+  const timeoutMs = opts.timeoutMs ?? 240_000;
+  const pollIntervalMs = opts.pollIntervalMs ?? 3000;
+
+  const startRes = await fetchWithTimeout(
+    `${ACTOR_RUNS_URL}?token=${encodeURIComponent(token)}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) },
+    30_000
+  );
+
+  if (!startRes.ok) {
+    const errText = await startRes.text().catch(() => '');
+    throw new Error(`[${opts.label}] Apify không khởi động được run (${startRes.status}): ${errText.slice(0, 300)}`);
+  }
+
+  const startBody = (await startRes.json()) as ApifyRunApiResponse;
+  const runId = startBody.data?.id;
+  const datasetId = startBody.data?.defaultDatasetId;
+
+  if (!runId || !datasetId) {
+    throw new Error(`[${opts.label}] Apify start run không trả về id/defaultDatasetId hợp lệ`);
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let status: string = startBody.data?.status ?? 'READY';
+
+  while (!TERMINAL_STATUSES.includes(status)) {
+    if (Date.now() > deadline) {
+      throw new Error(`[${opts.label}] Apify run ${runId} vượt timeout ${timeoutMs}ms (status cuối=${status})`);
+    }
+
+    await sleep(pollIntervalMs);
+
+    const pollRes = await fetchWithTimeout(`${actorRunStatusUrl(runId)}?token=${encodeURIComponent(token)}`, {}, 30_000);
+    if (pollRes.ok) {
+      const pollBody = (await pollRes.json()) as ApifyRunApiResponse;
+      status = pollBody.data?.status ?? status;
+    }
+    // poll fail tạm thời -> vòng lại thử tiếp, không throw ngay (deadline lo phần timeout)
+  }
+
+  if (status !== 'SUCCEEDED') {
+    throw new Error(`[${opts.label}] Apify run ${runId} kết thúc với status=${status}, không có dữ liệu tin cậy`);
+  }
+
+  const itemsRes = await fetchWithTimeout(
+    `${datasetItemsUrl(datasetId)}?token=${encodeURIComponent(token)}&format=json`,
+    {},
+    60_000
+  );
+
+  if (!itemsRes.ok) {
+    const errText = await itemsRes.text().catch(() => '');
+    throw new Error(`[${opts.label}] Không đọc được dataset ${datasetId} (${itemsRes.status}): ${errText.slice(0, 300)}`);
+  }
+
+  const items = await itemsRes.json();
+  if (!Array.isArray(items)) {
+    throw new Error(`[${opts.label}] Dataset ${datasetId} không trả về mảng`);
+  }
+
+  return { runId, datasetId, status, items: items as ApifyTikTokResult[] };
+}
+
+/**
+ * Tra chi phí THẬT (usageTotalUsd) của 1 run đã chạy xong, qua Apify Actor
+ * API. QUAN TRỌNG - đã verify thật (2026-07-27): `usageTotalUsd` CHƯA settle
+ * ngay lúc status chuyển SUCCEEDED (đo được $0.001 ngay lúc SUCCEEDED, 5s sau
+ * đọc lại ra đúng $0.011) - vì vậy hàm này chờ graceDelayMs (mặc định 5s)
+ * trước khi đọc, để giảm rủi ro under-count. Vẫn có thể chưa phải số cuối
+ * cùng tuyệt đối nếu Apify settle chậm hơn - đây là hạn chế đã biết của
+ * Apify billing API, không phải bug ở đây.
+ */
+export async function fetchApifyRunCost(runId: string, opts: { graceDelayMs?: number } = {}): Promise<number> {
+  const token = process.env.APIFY_API_TOKEN;
+  if (!token || !runId) return 0;
+
+  const graceDelayMs = opts.graceDelayMs ?? 5000;
+  await sleep(graceDelayMs);
+
+  try {
+    const res = await fetchWithTimeout(`${actorRunStatusUrl(runId)}?token=${encodeURIComponent(token)}`, {}, 30_000);
+    if (!res.ok) return 0;
+    const body = (await res.json()) as ApifyRunApiResponse;
+    const usd = body.data?.usageTotalUsd;
+    return typeof usd === 'number' ? usd : 0;
+  } catch (error) {
+    console.warn(`[TikTokService] fetchApifyRunCost(${runId}) thất bại, trả 0:`, error instanceof Error ? error.message : error);
+    return 0;
+  }
+}
+
+/**
+ * Đơn giá CHÍNH XÁC theo sự kiện, lấy trực tiếp từ Apify Actor API
+ * (GET .../acts/clockworks~tiktok-scraper/runs -> response.data.pricingInfo
+ * .pricingPerEvent.actorChargeEvents), đọc thật ngày 2026-07-27. Verify công
+ * thức khớp CHÍNH XÁC với chi phí thật đo được:
+ *  - PASS 1: 45 item, không tải = 45x(0.0037+0.0013) + 0.001 = $0.226 (khớp
+ *    tuyệt đối với run thật $0.2260).
+ *  - PASS 2: 5 item, 4 tải thành công = 5x(0.0037+0.0013) + 4x0.0013 + 0.001
+ *    = $0.0312 (khớp tuyệt đối với run thật $0.0312).
+ * CẢNH BÁO: giá Apify có thể đổi theo thời gian/actor version - đây vẫn là
+ * ƯỚC TÍNH trước khi chạy, không phải billing thật. Dùng fetchApifyRunCost()
+ * để lấy số liệu billing thật SAU khi chạy.
+ */
+const PRICE_PER_RESULT_USD = 0.0037;
+const PRICE_PER_COUNTRY_SCRAPE_USD = 0.0013; // add-on "scrape-as-in-country" - luôn áp dụng vì luôn set proxyCountryCode
+const PRICE_PER_VIDEO_DOWNLOAD_USD = 0.0013;
+const PRICE_ACTOR_START_USD = 0.001; // phí cố định 1 lần/run
 
 export function estimateApifyCost(itemCount: number, withVideoDownload: boolean): number {
   if (itemCount <= 0) return 0;
-  const base = itemCount * PRICE_PER_DISCOVERY_ITEM_USD;
-  const downloadAddon = withVideoDownload ? itemCount * PRICE_PER_DOWNLOAD_ITEM_USD : 0;
-  return Math.round((base + downloadAddon) * 100000) / 100000;
+  const perItem = PRICE_PER_RESULT_USD + PRICE_PER_COUNTRY_SCRAPE_USD + (withVideoDownload ? PRICE_PER_VIDEO_DOWNLOAD_USD : 0);
+  const total = itemCount * perItem + PRICE_ACTOR_START_USD;
+  return Math.round(total * 100000) / 100000;
 }
 
 /**
@@ -133,55 +261,28 @@ export class TikTokService {
     );
 
     const t0 = Date.now();
-    const res = await fetchWithTimeout(
-      `${HASHTAG_SEARCH_URL}?token=${encodeURIComponent(this.token)}`,
+    const outcome = await runApifyActor(
+      this.token,
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          hashtags: normalizedHashtags,
-          resultsPerPage: discoveryLimit,
-          shouldDownloadVideos: false,
-          downloadSubtitlesOptions: 'NEVER_DOWNLOAD_SUBTITLES',
-          proxyCountryCode: region,
-        }),
+        hashtags: normalizedHashtags,
+        resultsPerPage: discoveryLimit,
+        shouldDownloadVideos: false,
+        downloadSubtitlesOptions: 'NEVER_DOWNLOAD_SUBTITLES',
+        proxyCountryCode: region,
       },
-      180_000
+      { label: 'PASS 1 discover' }
     );
     const elapsedMs = Date.now() - t0;
 
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw new Error(
-        `[PASS 1] Apify hashtag discovery failed cho [${normalizedHashtags.join(', ')}] (${res.status}): ${errText.slice(0, 300)}`
-      );
-    }
-
-    const apifyRunId = res.headers.get('x-apify-run-id') || undefined;
-
-    let data: unknown;
-    try {
-      data = await res.json();
-    } catch {
-      throw new Error('[PASS 1] Apify trả về JSON không hợp lệ cho hashtag discovery');
-    }
-
-    if (!Array.isArray(data)) {
-      throw new Error(
-        `[PASS 1] Apify trả về dữ liệu không phải mảng cho hashtag discovery: ${JSON.stringify(data).slice(0, 200)}`
-      );
-    }
-
-    const items = data as ApifyTikTokResult[];
-    const topVideos = dedupeSortAndTakeTop(items, topN);
+    const topVideos = dedupeSortAndTakeTop(outcome.items, topN);
 
     console.log(
       `[TikTokService] PASS 1 (discover): hashtags=[${normalizedHashtags.join(', ')}] region=${region} ` +
-        `resultsPerPage=${discoveryLimit} apifyRunId=${apifyRunId ?? '(không rõ)'} thời gian=${elapsedMs}ms -> ` +
-        `${items.length} item thô, giữ top ${topVideos.length} sau bỏ trùng/lọc slideshow/sort`
+        `resultsPerPage=${discoveryLimit} apifyRunId=${outcome.runId} thời gian=${elapsedMs}ms -> ` +
+        `${outcome.items.length} item thô, giữ top ${topVideos.length} sau bỏ trùng/lọc slideshow/sort`
     );
 
-    return { videos: topVideos, apifyRunId, totalFetched: items.length };
+    return { videos: topVideos, apifyRunId: outcome.runId, totalFetched: outcome.items.length };
   }
 
   /**
@@ -199,18 +300,18 @@ export class TikTokService {
   async hydrateVideoDownloads(
     videos: ApifyTikTokResult[],
     region: string = 'VN'
-  ): Promise<ApifyTikTokResult[]> {
-    if (videos.length === 0) return videos;
+  ): Promise<{ videos: ApifyTikTokResult[]; apifyRunId?: string }> {
+    if (videos.length === 0) return { videos };
 
     if (!this.token) {
       console.warn('[TikTokService] PASS 2 (hydrate): thiếu APIFY_API_TOKEN, bỏ qua - trả video KHÔNG có downloadAddr');
-      return videos;
+      return { videos };
     }
 
     const urls = videos.map((v) => v.webVideoUrl).filter(Boolean);
     if (urls.length === 0) {
       console.warn('[TikTokService] PASS 2 (hydrate): không có webVideoUrl nào để tải, bỏ qua');
-      return videos;
+      return { videos };
     }
 
     const estimatedCost = estimateApifyCost(urls.length, true);
@@ -221,50 +322,22 @@ export class TikTokService {
 
     const t0 = Date.now();
     try {
-      const res = await fetchWithTimeout(
-        `${HASHTAG_SEARCH_URL}?token=${encodeURIComponent(this.token)}`,
+      const outcome = await runApifyActor(
+        this.token,
         {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            postURLs: urls,
-            resultsPerPage: 1,
-            shouldDownloadVideos: true,
-            videoKvStoreIdOrName: APIFY_KV_STORE_NAME,
-            downloadSubtitlesOptions: 'DOWNLOAD_SUBTITLES',
-            proxyCountryCode: region,
-          }),
+          postURLs: urls,
+          resultsPerPage: 1,
+          shouldDownloadVideos: true,
+          videoKvStoreIdOrName: APIFY_KV_STORE_NAME,
+          downloadSubtitlesOptions: 'DOWNLOAD_SUBTITLES',
+          proxyCountryCode: region,
         },
-        180_000
+        { label: 'PASS 2 hydrate' }
       );
       const elapsedMs = Date.now() - t0;
 
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        console.warn(
-          `[TikTokService] PASS 2 (hydrate) FAIL (HTTP ${res.status}) sau ${elapsedMs}ms: ${errText.slice(0, 300)} - ` +
-            'trả video KHÔNG có downloadAddr, tầng (b)/(c) sẽ xử lý tiếp'
-        );
-        return videos;
-      }
-
-      const apifyRunId = res.headers.get('x-apify-run-id') || undefined;
-
-      let data: unknown;
-      try {
-        data = await res.json();
-      } catch {
-        console.warn(`[TikTokService] PASS 2 (hydrate): JSON không hợp lệ sau ${elapsedMs}ms - trả video KHÔNG có downloadAddr`);
-        return videos;
-      }
-
-      if (!Array.isArray(data)) {
-        console.warn('[TikTokService] PASS 2 (hydrate): dữ liệu không phải mảng - trả video KHÔNG có downloadAddr');
-        return videos;
-      }
-
       const hydratedById = new Map<string, ApifyTikTokResult>();
-      for (const item of data as ApifyTikTokResult[]) {
+      for (const item of outcome.items) {
         if (item?.id) hydratedById.set(item.id, item);
       }
 
@@ -286,31 +359,33 @@ export class TikTokService {
       });
 
       console.log(
-        `[TikTokService] PASS 2 (hydrate): ${urls.length} URL, apifyRunId=${apifyRunId ?? '(không rõ)'} thời gian=${elapsedMs}ms -> ` +
+        `[TikTokService] PASS 2 (hydrate): ${urls.length} URL, apifyRunId=${outcome.runId} thời gian=${elapsedMs}ms -> ` +
           `${hydratedCount}/${videos.length} video có downloadAddr`
       );
 
-      return merged;
+      return { videos: merged, apifyRunId: outcome.runId };
     } catch (error) {
       const elapsedMs = Date.now() - t0;
       console.warn(
         `[TikTokService] PASS 2 (hydrate) LỖI sau ${elapsedMs}ms (không throw, job vẫn tiếp tục bằng tầng (b)/(c)):`,
         error instanceof Error ? error.message : error
       );
-      return videos;
+      return { videos };
     }
   }
 
   /**
    * Tìm + tải video theo hashtag, tách 2 pass để tối ưu chi phí Apify: PASS 1
    * cào rộng KHÔNG tải video (rẻ), PASS 2 chỉ tải THẬT đúng topN video đã
-   * chọn (đắt). Giữ nguyên signature/return type của bản 1-pass cũ để
-   * pipeline gọi vào không phải sửa gì.
+   * chọn (đắt). Tự tra chi phí THẬT của cả 2 pass qua fetchApifyRunCost() sau
+   * khi xong (song song, ~5s grace delay mỗi cái) và trả về apifyActualUsd -
+   * pipeline (researchPipelineService.ts) cộng thẳng vào ResearchJob.cost,
+   * không cần tự biết runId của từng pass.
    */
   async searchTrendVideosByHashtags(
     hashtags: string[],
     opts: { topN?: number; region?: string; maxItemsPerHashtag?: number } = {}
-  ): Promise<{ videos: ApifyTikTokResult[]; apifyRunId?: string; totalFetched: number }> {
+  ): Promise<{ videos: ApifyTikTokResult[]; apifyRunId?: string; totalFetched: number; apifyActualUsd: number }> {
     const region = opts.region ?? 'VN';
 
     const discovery = await this.discoverTrendVideos(hashtags, {
@@ -320,12 +395,28 @@ export class TikTokService {
     });
 
     if (discovery.videos.length === 0) {
-      return discovery;
+      const discoverCost = discovery.apifyRunId ? await fetchApifyRunCost(discovery.apifyRunId) : 0;
+      return { ...discovery, apifyActualUsd: discoverCost };
     }
 
-    const hydratedVideos = await this.hydrateVideoDownloads(discovery.videos, region);
+    const hydrateResult = await this.hydrateVideoDownloads(discovery.videos, region);
 
-    return { videos: hydratedVideos, apifyRunId: discovery.apifyRunId, totalFetched: discovery.totalFetched };
+    const [discoverCost, hydrateCost] = await Promise.all([
+      discovery.apifyRunId ? fetchApifyRunCost(discovery.apifyRunId) : Promise.resolve(0),
+      hydrateResult.apifyRunId ? fetchApifyRunCost(hydrateResult.apifyRunId) : Promise.resolve(0),
+    ]);
+    const apifyActualUsd = discoverCost + hydrateCost;
+
+    console.log(
+      `[TikTokService] Chi phí Apify THẬT: PASS 1=$${discoverCost} + PASS 2=$${hydrateCost} = $${apifyActualUsd}`
+    );
+
+    return {
+      videos: hydrateResult.videos,
+      apifyRunId: discovery.apifyRunId,
+      totalFetched: discovery.totalFetched,
+      apifyActualUsd,
+    };
   }
 
   /**

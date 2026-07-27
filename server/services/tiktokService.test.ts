@@ -186,14 +186,15 @@ test('hydrateVideoDownloads: PASS 2 fail (thiếu APIFY_API_TOKEN) -> trả nguy
 
     const result = await service.hydrateVideoDownloads(discovered);
 
-    assert.equal(result.length, 2);
-    assert.equal(result[0].id, 'v1');
-    assert.equal(result[0].videoMeta.downloadAddr, undefined);
-    assert.equal(result[1].id, 'v2');
-    assert.equal(result[1].videoMeta.downloadAddr, undefined);
+    assert.equal(result.apifyRunId, undefined);
+    assert.equal(result.videos.length, 2);
+    assert.equal(result.videos[0].id, 'v1');
+    assert.equal(result.videos[0].videoMeta.downloadAddr, undefined);
+    assert.equal(result.videos[1].id, 'v2');
+    assert.equal(result.videos[1].videoMeta.downloadAddr, undefined);
     // playCount và các field khác từ PASS 1 phải giữ nguyên, không bị mất.
-    assert.equal(result[0].playCount, 500);
-    assert.equal(result[1].playCount, 300);
+    assert.equal(result.videos[0].playCount, 500);
+    assert.equal(result.videos[1].playCount, 300);
   } finally {
     if (originalToken !== undefined) process.env.APIFY_API_TOKEN = originalToken;
   }
@@ -202,5 +203,5 @@ test('hydrateVideoDownloads: PASS 2 fail (thiếu APIFY_API_TOKEN) -> trả nguy
 test('hydrateVideoDownloads: mảng video rỗng -> trả về rỗng ngay, không gọi gì', async () => {
   const service = new TikTokService();
   const result = await service.hydrateVideoDownloads([]);
-  assert.deepEqual(result, []);
+  assert.deepEqual(result.videos, []);
 });
