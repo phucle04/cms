@@ -7,6 +7,7 @@ import TrendVideo from '../models/TrendVideo';
 import { GEMINI_MODEL, APIFY_DISCOVERY_LIMIT } from '../config/env';
 import { withGeminiRetry, estimateGeminiCost, type GeminiUsage, type PromptTemplateLike } from './geminiVideoService';
 import { TikTokService, estimateApifyCost, normalizeToTrendVideo } from './tiktokService';
+import { downloadVideo, type DownloadableVideo } from './videoDownloadService';
 import { HashtagSuggestionsSchema } from '../types/pipeline';
 
 /**
@@ -281,4 +282,58 @@ export async function runStage2Scraping(job: IResearchJob, emit: EmitFn): Promis
 
   console.log(`[Pipeline] Stage 2 xong - đã lưu ${savedCount} TrendVideo cho job ${jobId}`);
   emit('stage_complete', { jobId: job._id, stage: 'scraping', videosCount: savedCount, apifyActualUsd: result.apifyActualUsd });
+}
+
+// ============================================================
+// STAGE 3 - downloading
+// ============================================================
+
+/**
+ * Tải TUẦN TỰ (concurrency=1) - KHÔNG Promise.all, tránh dồn request lên
+ * Apify/yt-dlp cùng lúc. 1 video fail -> downloadStatus='text_only', log,
+ * ĐI TIẾP video kế - không throw giữa vòng lặp. File tải về được GIỮ LẠI
+ * trên đĩa (chưa cleanup) vì Stage 4 (analyzing) sẽ dùng ngay sau đó - dọn
+ * dẹp là trách nhiệm của Stage 4 (finally: cleanupVideo), không phải ở đây.
+ */
+export async function runStage3Downloading(job: IResearchJob, emit: EmitFn): Promise<void> {
+  await setStatus(job, 'downloading');
+  const jobId = String(job._id);
+
+  const videos = await TrendVideo.find({ jobId }).sort({ playCount: -1 });
+  if (videos.length === 0) {
+    throw new Error(`Không có TrendVideo nào cho job ${jobId} - Stage 2 có thể đã fail trước đó`);
+  }
+
+  await pushProgress(job, 'downloading', `Bắt đầu tải ${videos.length} video (tuần tự, tầng a -> b -> c)...`, 0, emit);
+
+  let idx = 0;
+  const tierCounts: Record<string, number> = {};
+
+  for (const video of videos) {
+    idx += 1;
+
+    const downloadable: DownloadableVideo = {
+      videoId: video.videoId,
+      webVideoUrl: video.webVideoUrl,
+      downloadAddr: video.downloadAddr,
+    };
+
+    const result = await downloadVideo({ video: downloadable, jobId });
+
+    video.downloadStatus = result.status;
+    await video.save();
+
+    tierCounts[result.source] = (tierCounts[result.source] ?? 0) + 1;
+
+    await pushProgress(
+      job,
+      'downloading',
+      `Video ${idx}/${videos.length} (id=${video.videoId}): ${result.status} (tầng: ${result.source})`,
+      Math.round((idx / videos.length) * 100),
+      emit
+    );
+  }
+
+  console.log(`[Pipeline] Stage 3 xong - phân bố tầng tải:`, tierCounts);
+  emit('stage_complete', { jobId: job._id, stage: 'downloading', tierCounts });
 }

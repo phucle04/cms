@@ -46,7 +46,14 @@ function maxSizeBytes(): number {
   return VIDEO_MAX_SIZE_MB * 1024 * 1024;
 }
 
-function targetFilePath(jobId: string, videoId: string): string {
+/**
+ * Đường dẫn file tạm CỐ ĐỊNH theo (jobId, videoId) - export để
+ * researchPipelineService.ts tính lại được đúng đường dẫn ở Stage 4 (analyzing)
+ * mà không cần lưu filePath vào DB (file tạm không phải state cần persist).
+ * Nếu file không còn tồn tại lúc Stage 4 chạy (ví dụ resume sau crash, thư
+ * mục tạm đã bị dọn) thì coi video đó như tải thất bại, KHÔNG throw cả job.
+ */
+export function getVideoFilePath(jobId: string, videoId: string): string {
   return path.join(VIDEO_TMP_DIR, `${jobId}-${videoId}.mp4`);
 }
 
@@ -225,7 +232,7 @@ export async function downloadVideo(
   tierFns: DownloadTierFns = {}
 ): Promise<DownloadVideoResult> {
   const { video, jobId } = params;
-  const destPath = targetFilePath(jobId, video.videoId);
+  const destPath = getVideoFilePath(jobId, video.videoId);
 
   const tryApify = tierFns.tryApifyKvStore ?? tryDownloadFromApifyKvStore;
   const tryYtDlp = tierFns.tryYtDlp ?? tryDownloadWithYtDlp;
