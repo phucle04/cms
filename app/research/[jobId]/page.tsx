@@ -1,0 +1,234 @@
+'use client';
+
+import { useState } from 'react';
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import toast from 'react-hot-toast';
+import { ArrowLeft, AlertTriangle, Wifi, WifiOff } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/common/Card';
+import { Button } from '@/components/common/Button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/common/Tabs';
+import { Skeleton } from '@/components/ui/skeleton';
+import { JobStageProgress } from '@/components/modules/research/JobStageProgress';
+import { HashtagSelectionPanel } from '@/components/modules/research/HashtagSelectionPanel';
+import { TrendVideoCard } from '@/components/modules/research/TrendVideoCard';
+import { ResearchScriptCard } from '@/components/modules/research/ResearchScriptCard';
+import { useResearchJobStream } from '@/hooks/useResearchJobStream';
+import * as API from '@/lib/api';
+import * as Types from '@/lib/types';
+
+const PRE_SCRAPE_STATUSES: Types.ResearchJobStatus[] = ['queued', 'generating_hashtags', 'awaiting_hashtag_selection'];
+const PRE_SCRIPT_STATUSES: Types.ResearchJobStatus[] = [
+  'queued',
+  'generating_hashtags',
+  'awaiting_hashtag_selection',
+  'scraping',
+  'downloading',
+  'analyzing',
+];
+
+function productName(productId: Types.ResearchJob['productId']): string {
+  if (typeof productId === 'string') return productId;
+  return productId.name;
+}
+
+function productLinkId(productId: Types.ResearchJob['productId']): string {
+  return typeof productId === 'string' ? productId : productId.id;
+}
+
+function VideoGridSkeleton() {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="space-y-2">
+          <Skeleton className="aspect-9/16 w-full rounded-lg" />
+          <Skeleton className="h-4 w-3/4" />
+          <Skeleton className="h-4 w-1/2" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ScriptListSkeleton() {
+  return (
+    <div className="space-y-4">
+      {Array.from({ length: 3 }).map((_, i) => (
+        <Skeleton key={i} className="h-40 w-full rounded-lg" />
+      ))}
+    </div>
+  );
+}
+
+export default function ResearchJobPage() {
+  const params = useParams<{ jobId: string }>();
+  const jobId = params.jobId;
+  const { job, trendVideos, scripts, loading, error, connectionMode, reload } = useResearchJobStream(jobId);
+  const [submittingHashtags, setSubmittingHashtags] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+
+  const handleSelectHashtags = async (selected: string[]) => {
+    setSubmittingHashtags(true);
+    try {
+      await API.ResearchJobAPI.selectHashtags(jobId, selected);
+      toast.success('Đã chọn hashtag, đang bắt đầu cào TikTok...');
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Không chọn được hashtag');
+    } finally {
+      setSubmittingHashtags(false);
+    }
+  };
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    try {
+      await API.ResearchJobAPI.retry(jobId);
+      toast.success('Đang thử lại job từ bước bị lỗi...');
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Thử lại thất bại');
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  if (loading && !job) {
+    return (
+      <div className="p-6 space-y-6">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-24 w-full rounded-lg" />
+        <Skeleton className="h-40 w-full rounded-lg" />
+      </div>
+    );
+  }
+
+  if (error && !job) {
+    return (
+      <div className="p-6">
+        <Card>
+          <CardContent className="py-12 text-center space-y-4">
+            <AlertTriangle className="mx-auto text-red-500" size={32} />
+            <p className="text-gray-600 dark:text-gray-400">{error}</p>
+            <Button onClick={reload}>Thử lại</Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!job) return null;
+
+  const latestProgress = job.progress[job.progress.length - 1];
+  const videosPending = trendVideos.length === 0 && PRE_SCRAPE_STATUSES.includes(job.status);
+  const videosLoading = trendVideos.length === 0 && job.status === 'scraping';
+  const scriptsPending = scripts.length === 0 && PRE_SCRIPT_STATUSES.includes(job.status);
+  const scriptsLoading = scripts.length === 0 && job.status === 'generating_scripts';
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <Link
+            href="/research"
+            className="inline-flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white mb-2"
+          >
+            <ArrowLeft size={14} /> Lịch sử research
+          </Link>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+            Research:{' '}
+            <Link href={`/products/${productLinkId(job.productId)}`} className="hover:underline">
+              {productName(job.productId)}
+            </Link>
+          </h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            Chi phí ước tính: ${job.cost.totalEstimatedUsd.toFixed(4)} · Tạo lúc {new Date(job.createdAt).toLocaleString('vi-VN')}
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+          {connectionMode === 'sse' ? <Wifi size={14} className="text-green-500" /> : <WifiOff size={14} className="text-amber-500" />}
+          {connectionMode === 'sse' ? 'Đang cập nhật real-time' : 'Mất kết nối real-time - đang cập nhật mỗi 3 giây'}
+        </div>
+      </div>
+
+      <Card>
+        <CardContent className="pt-6">
+          <JobStageProgress
+            status={job.status}
+            errorStage={job.error?.stage}
+            latestPercent={latestProgress?.percent}
+            latestMessage={latestProgress?.message}
+          />
+        </CardContent>
+      </Card>
+
+      {job.status === 'failed' && (
+        <Card className="border-red-300 dark:border-red-900">
+          <CardContent className="pt-6 space-y-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="text-red-500 shrink-0 mt-0.5" size={20} />
+              <div>
+                <p className="font-semibold text-red-700 dark:text-red-400">Job thất bại ở bước &quot;{job.error?.stage}&quot;</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{job.error?.message}</p>
+              </div>
+            </div>
+            <Button onClick={handleRetry} isLoading={retrying} variant="destructive">
+              Thử lại từ bước bị lỗi
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {job.status === 'awaiting_hashtag_selection' && (
+        <HashtagSelectionPanel
+          suggestedHashtags={job.suggestedHashtags}
+          onSubmit={handleSelectHashtags}
+          submitting={submittingHashtags}
+        />
+      )}
+
+      <Tabs defaultValue="videos">
+        <TabsList>
+          <TabsTrigger value="videos">Video viral ({trendVideos.length})</TabsTrigger>
+          <TabsTrigger value="scripts">5 kịch bản ({scripts.length})</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="videos">
+          {videosLoading && <VideoGridSkeleton />}
+          {videosPending && (
+            <Card>
+              <CardContent className="py-10 text-center text-gray-500 dark:text-gray-400">
+                Video sẽ xuất hiện sau khi cào xong TikTok.
+              </CardContent>
+            </Card>
+          )}
+          {trendVideos.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+              {trendVideos.map((v) => (
+                <TrendVideoCard key={v.id} video={v} />
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="scripts">
+          {scriptsLoading && <ScriptListSkeleton />}
+          {scriptsPending && (
+            <Card>
+              <CardContent className="py-10 text-center text-gray-500 dark:text-gray-400">
+                Kịch bản sẽ xuất hiện sau khi phân tích xong video và sinh kịch bản.
+              </CardContent>
+            </Card>
+          )}
+          {scripts.length > 0 && (
+            <div className="space-y-4">
+              {scripts.map((s, i) => (
+                <ResearchScriptCard key={s.id} script={s} index={i} />
+              ))}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}

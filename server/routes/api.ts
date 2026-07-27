@@ -6,6 +6,7 @@ import * as researchController from '../controllers/researchController';
 import * as researchJobController from '../controllers/researchJobController';
 import * as brandProfileController from '../controllers/brandProfileController';
 import * as promptTemplateController from '../controllers/promptTemplateController';
+import * as scriptController from '../controllers/scriptController';
 import { proxyImage } from '../controllers/proxyImageController';
 
 const router = express.Router();
@@ -44,6 +45,14 @@ router.get('/research/jobs/:id/stream', researchJobController.streamResearchJob)
 // Proxy ảnh (chống hotlink-block từ TikTok CDN) - whitelist domain xem
 // proxyImageController.ts::ALLOWED_HOST_SUFFIXES.
 router.get('/proxy-image', proxyImage);
+
+// Script routes (controller đã có sẵn từ trước, chỉ mới nối route ở đây để
+// UI Giai đoạn 4 có thể "Đẩy sang Scripting" = đổi status script thật)
+router.get('/scripts', scriptController.getScripts);
+router.get('/scripts/:id', scriptController.getScript);
+router.post('/scripts', scriptController.createScript);
+router.put('/scripts/:id', scriptController.updateScript);
+router.delete('/scripts/:id', scriptController.deleteScript);
 
 // Brand profile routes
 router.get('/brand-profiles', brandProfileController.getBrandProfiles);

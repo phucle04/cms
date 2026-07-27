@@ -83,9 +83,7 @@ export const IdeaAPI = {
 };
 
 // ============================================================
-// Product API — ⚠️ CHỜ BACKEND: chưa có route /products
-// Gọi theo chuẩn REST, sẽ hoạt động ngay khi backend bổ sung
-// productController.ts + router.use('/products', ...) trong api.ts
+// Product API — khớp đúng với server/routes/api.ts
 // ============================================================
 export const ProductAPI = {
   async list(): Promise<Types.ProductBrief[]> {
@@ -122,6 +120,135 @@ export const ResearchAPI = {
     return apiFetch<Types.TrendResearchResult>('/research/run', {
       method: 'POST',
       body: JSON.stringify({ productId, hashtags }),
+    });
+  },
+};
+
+// ============================================================
+// Research Job API (pipeline 5 stage) — khớp đúng
+// server/controllers/researchJobController.ts
+// ============================================================
+
+export const API_BASE_URL = API_BASE;
+
+export interface ResearchJobDetail {
+  job: Types.ResearchJob;
+  trendVideos: Types.TrendVideo[];
+  ideas: Types.Idea[];
+  scripts: Types.ResearchScript[];
+}
+
+export interface PaginatedJobs {
+  data: Types.ResearchJob[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
+}
+
+export const ResearchJobAPI = {
+  async create(productId: string, autoSelectTop3?: boolean): Promise<{ jobId: string; status: Types.ResearchJobStatus }> {
+    return apiFetch('/research/jobs', {
+      method: 'POST',
+      body: JSON.stringify({ productId, autoSelectTop3 }),
+    });
+  },
+
+  async list(page = 1, limit = 20): Promise<PaginatedJobs> {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const res = await fetch(`${API_BASE}/research/jobs?page=${page}&limit=${limit}`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || body.message || `API error: ${res.status}`);
+    }
+    const json = await res.json();
+    return { data: json.data, pagination: json.pagination };
+  },
+
+  async get(id: string): Promise<ResearchJobDetail> {
+    return apiFetch<ResearchJobDetail>(`/research/jobs/${id}`);
+  },
+
+  async selectHashtags(id: string, selectedHashtags: string[]): Promise<{ jobId: string; selectedHashtags: string[] }> {
+    return apiFetch(`/research/jobs/${id}/hashtags`, {
+      method: 'POST',
+      body: JSON.stringify({ selectedHashtags }),
+    });
+  },
+
+  async retry(id: string): Promise<{ jobId: string; resumingFromStage: string }> {
+    return apiFetch(`/research/jobs/${id}/retry`, { method: 'POST' });
+  },
+
+  streamUrl(id: string): string {
+    return `${API_BASE}/research/jobs/${id}/stream`;
+  },
+};
+
+export function proxyImageUrl(url: string): string {
+  return `${API_BASE}/proxy-image?url=${encodeURIComponent(url)}`;
+}
+
+// ============================================================
+// Research Script API (kịch bản THẬT do pipeline sinh ra) — khớp
+// server/controllers/scriptController.ts
+// ============================================================
+
+export const ResearchScriptAPI = {
+  async update(id: string, data: Partial<Types.ResearchScript>): Promise<Types.ResearchScript> {
+    return apiFetch<Types.ResearchScript>(`/scripts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+};
+
+// ============================================================
+// Brand Profile API — khớp server/controllers/brandProfileController.ts
+// ============================================================
+
+export const BrandProfileAPI = {
+  async list(): Promise<Types.BrandProfile[]> {
+    return apiFetch<Types.BrandProfile[]>('/brand-profiles');
+  },
+
+  async get(id: string): Promise<Types.BrandProfile> {
+    return apiFetch<Types.BrandProfile>(`/brand-profiles/${id}`);
+  },
+
+  async create(data: Partial<Types.BrandProfile>): Promise<Types.BrandProfile> {
+    return apiFetch<Types.BrandProfile>('/brand-profiles', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async update(id: string, data: Partial<Types.BrandProfile>): Promise<Types.BrandProfile> {
+    return apiFetch<Types.BrandProfile>(`/brand-profiles/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+};
+
+// ============================================================
+// Prompt Template API — khớp server/controllers/promptTemplateController.ts
+// ============================================================
+
+export const PromptTemplateAPI = {
+  async list(key?: Types.PromptTemplateKey): Promise<Types.PromptTemplate[]> {
+    return apiFetch<Types.PromptTemplate[]>(key ? `/prompt-templates?key=${key}` : '/prompt-templates');
+  },
+
+  async update(id: string, data: Partial<Types.PromptTemplate>): Promise<Types.PromptTemplate> {
+    return apiFetch<Types.PromptTemplate>(`/prompt-templates/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async resetToDefault(id: string): Promise<Types.PromptTemplate> {
+    return apiFetch<Types.PromptTemplate>(`/prompt-templates/${id}/reset-default`, {
+      method: 'POST',
     });
   },
 };

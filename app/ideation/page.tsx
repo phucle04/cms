@@ -10,7 +10,8 @@ import { Modal } from '@/components/common/Modal';
 import { Spinner } from '@/components/common/Spinner';
 import { ProductBriefForm } from '@/components/modules/ideation/ProductBriefForm';
 import { IdeaForm } from '@/components/modules/ideation/IdeaForm';
-import { Plus, Trash2, Edit, Zap } from 'lucide-react';
+import { Plus, Trash2, Edit, Zap, Sparkles } from 'lucide-react';
+import Link from 'next/link';
 
 export default function IdeationPage() {
   const [products, setProducts] = useState<Types.ProductBrief[]>([]);
@@ -209,6 +210,12 @@ export default function IdeationPage() {
                     <Trash2 size={16} className="mr-1" />
                     Delete
                   </Button>
+                  <Link href={`/products/${product.id}`}>
+                    <Button variant="outline" size="sm">
+                      <Sparkles size={16} className="mr-1" />
+                      Nghiên cứu TikTok
+                    </Button>
+                  </Link>
                 </div>
               </CardContent>
             </Card>

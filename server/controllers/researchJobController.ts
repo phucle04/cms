@@ -82,6 +82,7 @@ export const listResearchJobs = asyncHandler(async (req: AuthRequest, res: Respo
   const filter = { userId: req.userId };
   const [jobs, total] = await Promise.all([
     ResearchJob.find(filter)
+      .populate('productId')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit),
