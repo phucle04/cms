@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { downloadVideo, type DownloadableVideo } from './videoDownloadService';
+import fs from 'fs/promises';
+import path from 'path';
+import { downloadVideo, cleanupJobTempFiles, type DownloadableVideo } from './videoDownloadService';
+import { VIDEO_TMP_DIR } from '../config/env';
 
 /**
  * Test downloadVideo với cả 3 tầng được mock qua tham số tierFns (dependency
@@ -77,4 +80,40 @@ test('downloadVideo: thử tầng (a) trước tầng (b) đúng thứ tự', as
   );
 
   assert.deepEqual(callOrder, ['apify', 'ytdlp']);
+});
+
+// ============================================================
+// cleanupJobTempFiles - dọn file tạm kể cả khi pipeline throw giữa chừng
+// (dùng trong catch block của researchPipelineService.ts::runResearchPipeline)
+// ============================================================
+
+test('cleanupJobTempFiles: chỉ xoá file đúng tiền tố "{jobId}-", giữ nguyên file job khác', async () => {
+  await fs.mkdir(VIDEO_TMP_DIR, { recursive: true });
+
+  const jobId = `test-cleanup-job-${Date.now()}`;
+  const otherJobId = `unrelated-job-${Date.now()}`;
+
+  const fileA = path.join(VIDEO_TMP_DIR, `${jobId}-v1.mp4`);
+  const fileB = path.join(VIDEO_TMP_DIR, `${jobId}-v2.mp4`);
+  const fileOther = path.join(VIDEO_TMP_DIR, `${otherJobId}-v1.mp4`);
+
+  await fs.writeFile(fileA, 'dummy');
+  await fs.writeFile(fileB, 'dummy');
+  await fs.writeFile(fileOther, 'dummy');
+
+  try {
+    const { deletedCount } = await cleanupJobTempFiles(jobId);
+
+    assert.equal(deletedCount, 2);
+    assert.equal(await fs.stat(fileA).catch(() => null), null);
+    assert.equal(await fs.stat(fileB).catch(() => null), null);
+    assert.ok(await fs.stat(fileOther)); // file job khác KHÔNG bị xoá
+  } finally {
+    await fs.unlink(fileOther).catch(() => {});
+  }
+});
+
+test('cleanupJobTempFiles: không có file nào khớp -> deletedCount=0, không throw', async () => {
+  const { deletedCount } = await cleanupJobTempFiles(`no-such-job-${Date.now()}`);
+  assert.equal(deletedCount, 0);
 });

@@ -124,15 +124,22 @@ async function setStatus(job: IResearchJob, status: ResearchJobStatus): Promise<
   await job.save();
 }
 
-function addGeminiUsage(job: IResearchJob, usage: GeminiUsage): void {
+export function addGeminiUsage(job: IResearchJob, usage: GeminiUsage): void {
   job.cost.geminiInputTokens += usage.inputTokens;
   job.cost.geminiOutputTokens += usage.outputTokens;
   job.cost.geminiEstimatedUsd += usage.estimatedUsd;
   recomputeTotalCost(job);
 }
 
-function recomputeTotalCost(job: IResearchJob): void {
-  job.cost.totalEstimatedUsd = job.cost.apifyEstimatedUsd + job.cost.geminiEstimatedUsd;
+/**
+ * BUG THẬT tìm thấy qua test (F1-test): bản đầu tiên cộng nhầm
+ * apifyEstimatedUsd (ước tính TRƯỚC khi chạy) thay vì apifyActualUsd (chi
+ * phí THẬT sau khi Stage 2 xong) - khiến totalEstimatedUsd không bao giờ
+ * phản ánh chi phí Apify thật dù đã có số liệu chính xác. Dùng apifyActualUsd
+ * làm nguồn chính vì đó là số ĐÁNG TIN CẬY nhất một khi đã có.
+ */
+export function recomputeTotalCost(job: IResearchJob): void {
+  job.cost.totalEstimatedUsd = job.cost.apifyActualUsd + job.cost.geminiEstimatedUsd;
 }
 
 async function fetchPromptTemplate(userId: string, key: 'hashtag' | 'video_analysis' | 'script_gen') {
@@ -394,7 +401,7 @@ export async function runStage3Downloading(job: IResearchJob, emit: EmitFn): Pro
 // STAGE 4 - analyzing
 // ============================================================
 
-const MIN_VIDEOS_WITH_ANALYSIS = 2;
+export const MIN_VIDEOS_WITH_ANALYSIS = 2;
 
 /**
  * Tải nội dung phụ đề (.vtt) về plain text - dùng làm transcript cho video
@@ -436,7 +443,28 @@ async function fetchSubtitleText(
  * tạm local, kể cả khi throw - deleteGeminiFile() đã được xử lý BÊN TRONG
  * analyzeVideo() (finally riêng của nó), không gọi lại ở đây.
  */
-export async function runStage4Analyzing(job: IResearchJob, emit: EmitFn): Promise<void> {
+/**
+ * analyzeVideoFn/analyzeFromTextOnlyFn injectable (mặc định = hàm thật từ
+ * geminiVideoService.ts) - CHỈ để test dùng mock thay thế trực tiếp, không
+ * cần mock module/require (đã thử và không ổn định khi chạy cùng lúc với
+ * import ESM của chính file này - xem researchPipelineService.test.ts).
+ * Production code không bao giờ truyền tham số thứ 3 này.
+ */
+export interface Stage4Deps {
+  analyzeVideoFn: typeof analyzeVideo;
+  analyzeFromTextOnlyFn: typeof analyzeFromTextOnly;
+}
+
+const defaultStage4Deps: Stage4Deps = {
+  analyzeVideoFn: analyzeVideo,
+  analyzeFromTextOnlyFn: analyzeFromTextOnly,
+};
+
+export async function runStage4Analyzing(
+  job: IResearchJob,
+  emit: EmitFn,
+  deps: Stage4Deps = defaultStage4Deps
+): Promise<void> {
   await setStatus(job, 'analyzing');
   const jobId = String(job._id);
 
@@ -480,7 +508,7 @@ export async function runStage4Analyzing(job: IResearchJob, emit: EmitFn): Promi
       let analysisResult: Awaited<ReturnType<typeof analyzeVideo>>;
 
       if (fileExists) {
-        analysisResult = await analyzeVideo({
+        analysisResult = await deps.analyzeVideoFn({
           filePath,
           mimeType: 'video/mp4',
           template,
@@ -498,7 +526,7 @@ export async function runStage4Analyzing(job: IResearchJob, emit: EmitFn): Promi
         }
 
         const subtitles = await fetchSubtitleText(video.subtitleLinks);
-        analysisResult = await analyzeFromTextOnly({
+        analysisResult = await deps.analyzeFromTextOnlyFn({
           context: {
             caption: video.caption,
             hashtags: video.hashtags,
@@ -782,7 +810,7 @@ const STAGE_ORDER: ResearchJobStatus[] = [
   'generating_scripts',
 ];
 
-function stageIndexForStatus(status: ResearchJobStatus): number {
+export function stageIndexForStatus(status: ResearchJobStatus): number {
   const idx = STAGE_ORDER.indexOf(status);
   return idx === -1 ? 0 : idx;
 }
