@@ -72,6 +72,23 @@ export interface IResearchJob extends Document {
   progress: IResearchJobProgressEntry[];
   apifyRunId?: string;
   apifyKvStoreId?: string;
+  /**
+   * Bản sao THÔ (raw) của kết quả searchTrendVideosByHashtags() (đã qua PASS
+   * 1+2, gồm cả downloadAddr/subtitleLinks), lưu NGAY sau khi Apify trả kết
+   * quả và TRƯỚC khi xử lý từng video. Lý do (sự cố thật 2026-07-27): dữ
+   * liệu này đã tốn tiền Apify để lấy - nếu chết giữa lúc lưu từng
+   * TrendVideo, resumeResearchPipeline phải đọc lại từ đây, TUYỆT ĐỐI không
+   * gọi lại Apify. Type để Mixed (không dùng ApifyTikTokResult cụ thể) vì
+   * đây chỉ là cache thô để resume, không phải dữ liệu cần query có cấu trúc.
+   */
+  rawScrapedVideos?: Record<string, unknown>[];
+  /**
+   * Tương tự rawScrapedVideos nhưng cho Stage 5: bản sao THÔ 5 kịch bản
+   * Gemini trả về, lưu NGAY trước khi tạo Idea/Script. Nếu chết giữa lúc tạo
+   * Idea/Script (ví dụ xong item 3/5) thì resume đọc lại từ đây, không gọi
+   * lại Gemini - dữ liệu này cũng đã tốn tiền để sinh ra.
+   */
+  rawGeneratedScripts?: Record<string, unknown>[];
   resultIdeaIds: Types.ObjectId[];
   resultScriptIds: Types.ObjectId[];
   error?: IResearchJobError;
@@ -105,6 +122,8 @@ const researchJobSchema = new Schema<IResearchJob>(
     ],
     apifyRunId: String,
     apifyKvStoreId: String,
+    rawScrapedVideos: [Schema.Types.Mixed],
+    rawGeneratedScripts: [Schema.Types.Mixed],
     resultIdeaIds: [{ type: Schema.Types.ObjectId, ref: 'Idea' }],
     resultScriptIds: [{ type: Schema.Types.ObjectId, ref: 'Script' }],
     error: {

@@ -134,14 +134,27 @@ test('stageIndexForStatus: thứ tự đúng, status lạ (vd "failed") rơi v�
 // runStage2Scraping - resume bỏ qua nếu đã cào xong (KHÔNG gọi lại Apify)
 // ============================================================
 
-test('runStage2Scraping: resume - đã có TrendVideo cho job thì KHÔNG gọi lại Apify', async () => {
-  const countSpy = mock.method(TrendVideo, 'countDocuments', async () => 5);
+test('runStage2Scraping: resume MỨC 1 - đã có rawScrapedVideos thì KHÔNG gọi lại Apify', async () => {
+  const rawVideos = [1, 2, 3, 4, 5].map((i) => ({
+    id: `v${i}`,
+    webVideoUrl: `https://www.tiktok.com/@x/video/v${i}`,
+    text: `caption ${i}`,
+    playCount: i * 100,
+    hashtags: [],
+  }));
+
   const searchSpy = mock.method(TikTokService.prototype, 'searchTrendVideosByHashtags', async () => {
-    throw new Error('KHÔNG được gọi Apify khi đã resume và có sẵn video');
+    throw new Error('KHÔNG được gọi Apify khi đã có rawScrapedVideos lưu sẵn');
+  });
+  // Giả lập cả 5 video đã được lưu thành TrendVideo từ trước (resume MỨC 2
+  // cũng phải bỏ qua, không gọi lại fetchTopComments).
+  const existsSpy = mock.method(TrendVideo, 'exists', async () => true);
+  const fetchCommentsSpy = mock.method(TikTokService.prototype, 'fetchTopComments', async () => {
+    throw new Error('KHÔNG được gọi fetchTopComments cho video đã tồn tại (resume MỨC 2)');
   });
 
   try {
-    const job = makeFakeJob();
+    const job = makeFakeJob({ rawScrapedVideos: rawVideos as unknown as IResearchJob['rawScrapedVideos'] });
     let stageCompletePayload: Record<string, unknown> | undefined;
     const emit: EmitFn = (event, payload) => {
       if (event === 'stage_complete') stageCompletePayload = payload;
@@ -149,13 +162,14 @@ test('runStage2Scraping: resume - đã có TrendVideo cho job thì KHÔNG gọi 
 
     await runStage2Scraping(job, emit);
 
-    assert.equal(countSpy.mock.callCount(), 1);
     assert.equal(searchSpy.mock.callCount(), 0);
+    assert.equal(fetchCommentsSpy.mock.callCount(), 0);
+    assert.equal(existsSpy.mock.callCount(), 5);
     assert.equal(stageCompletePayload?.videosCount, 5);
-    assert.equal(stageCompletePayload?.apifyActualUsd, 0);
   } finally {
-    countSpy.mock.restore();
     searchSpy.mock.restore();
+    existsSpy.mock.restore();
+    fetchCommentsSpy.mock.restore();
   }
 });
 

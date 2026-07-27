@@ -19,6 +19,8 @@ import {
 import { analyzeVideo, analyzeFromTextOnly } from './geminiVideoService';
 import { HashtagSuggestionsSchema, GeneratedScriptsSchema } from '../types/pipeline';
 import type { VideoAnalysis } from '../types/videoAnalysis';
+import type { ApifyTikTokResult } from '../types/apify';
+import { withDbRetry } from '../utils/withDbRetry';
 import fs from 'fs/promises';
 
 /**
@@ -107,6 +109,9 @@ function fillTemplate(template: string, values: Record<string, string | number>)
 // Helper cập nhật progress + cộng dồn cost + gọi emit
 // ============================================================
 
+// job.save() bọc withDbRetry Ở ĐÂY (không phải ở từng call site) vì
+// pushProgress/setStatus được gọi RẤT nhiều lần xuyên suốt cả 5 stage - bọc
+// 1 lần ở đây bảo vệ được mọi nơi gọi, không cần sửa từng chỗ.
 async function pushProgress(
   job: IResearchJob,
   stage: string,
@@ -115,13 +120,13 @@ async function pushProgress(
   emit: EmitFn
 ): Promise<void> {
   job.progress.push({ stage, message, percent, at: new Date() });
-  await job.save();
+  await withDbRetry(() => job.save(), `pushProgress(${stage})`);
   emit('progress', { jobId: job._id, stage, message, percent });
 }
 
 async function setStatus(job: IResearchJob, status: ResearchJobStatus): Promise<void> {
   job.status = status;
-  await job.save();
+  await withDbRetry(() => job.save(), `setStatus(${status})`);
 }
 
 export function addGeminiUsage(job: IResearchJob, usage: GeminiUsage): void {
@@ -215,7 +220,7 @@ export async function runStage1GenerateHashtags(job: IResearchJob, emit: EmitFn)
     hashtags = HashtagSuggestionsSchema.parse(parsed);
 
     job.suggestedHashtags = hashtags;
-    await job.save();
+    await withDbRetry(() => job.save(), 'Stage1 save suggestedHashtags');
 
     await pushProgress(
       job,
@@ -232,7 +237,7 @@ export async function runStage1GenerateHashtags(job: IResearchJob, emit: EmitFn)
         ? job.selectedHashtags
         : [...hashtags].sort((a, b) => b.score - a.score).slice(0, 3).map((h) => h.tag);
     job.selectedHashtags = top3;
-    await job.save();
+    await withDbRetry(() => job.save(), 'Stage1 save selectedHashtags');
 
     // discoveryLimit là số item MỖI HASHTAG (xem env.ts) - cảnh báo chi phí
     // TRƯỚC khi sang stage 2, đúng yêu cầu "chặn được nếu cần".
@@ -257,76 +262,105 @@ export async function runStage1GenerateHashtags(job: IResearchJob, emit: EmitFn)
 
 export async function runStage2Scraping(job: IResearchJob, emit: EmitFn): Promise<void> {
   await setStatus(job, 'scraping');
-  const jobIdEarly = String(job._id);
-
-  // Idempotent cho resume: nếu Stage 2 đã lưu TrendVideo cho job này từ lần
-  // chạy trước (crash giữa lúc xong Stage 2 và lúc Stage 3 kịp đổi status),
-  // KHÔNG gọi lại Apify lần nữa - đây chính là phần tốn tiền nhất của cả job.
-  const existingCount = await TrendVideo.countDocuments({ jobId: jobIdEarly });
-  if (existingCount > 0) {
-    console.log(`[Pipeline] Stage 2 (resume): đã có ${existingCount} TrendVideo cho job này - bỏ qua gọi Apify lại.`);
-    await pushProgress(job, 'scraping', `Resume: dùng lại ${existingCount} video đã cào từ trước`, 100, emit);
-    emit('stage_complete', { jobId: job._id, stage: 'scraping', videosCount: existingCount, apifyActualUsd: 0 });
-    return;
-  }
-
-  await pushProgress(job, 'scraping', `Bắt đầu cào video cho hashtag: [${job.selectedHashtags.join(', ')}]`, 0, emit);
-
-  if (job.selectedHashtags.length === 0) {
-    throw new Error('Không có hashtag nào được chọn (selectedHashtags rỗng) - không thể cào video');
-  }
+  const jobId = String(job._id);
+  const userId = job.userId.toString();
 
   const tiktokService = new TikTokService();
-  const result = await tiktokService.searchTrendVideosByHashtags(job.selectedHashtags, { topN: 5 });
+  let rawVideos: ApifyTikTokResult[];
 
-  job.cost.apifyActualUsd += result.apifyActualUsd;
-  recomputeTotalCost(job);
-  await job.save();
+  // Idempotent cho resume, MỨC 1 (raw data): nếu đã có rawScrapedVideos lưu
+  // sẵn từ lần chạy trước (Apify đã trả kết quả, chỉ chưa lưu hết từng
+  // TrendVideo thì bị chết) -> dùng lại NGUYÊN, TUYỆT ĐỐI không gọi lại
+  // Apify. Đây chính là sự cố thật 2026-07-27: job chết giữa lúc lưu video
+  // thứ 3/5, dữ liệu Apify đã trả về (đã tốn tiền) nhưng chưa kịp lưu.
+  if (job.rawScrapedVideos && job.rawScrapedVideos.length > 0) {
+    console.log(
+      `[Pipeline] Stage 2 (resume MỨC 1): đã có ${job.rawScrapedVideos.length} raw video từ Apify lưu sẵn - ` +
+        'bỏ qua gọi lại Apify hoàn toàn.'
+    );
+    rawVideos = job.rawScrapedVideos as unknown as ApifyTikTokResult[];
+    await pushProgress(job, 'scraping', `Resume: dùng lại ${rawVideos.length} video Apify đã lưu sẵn`, 40, emit);
+  } else {
+    await pushProgress(job, 'scraping', `Bắt đầu cào video cho hashtag: [${job.selectedHashtags.join(', ')}]`, 0, emit);
 
-  await pushProgress(
-    job,
-    'scraping',
-    `Đã lấy ${result.videos.length} video (tổng ${result.totalFetched} item thô trước khi lọc). ` +
-      `Chi phí Apify THẬT (2 pass): $${result.apifyActualUsd}`,
-    40,
-    emit
-  );
+    if (job.selectedHashtags.length === 0) {
+      throw new Error('Không có hashtag nào được chọn (selectedHashtags rỗng) - không thể cào video');
+    }
 
-  if (result.videos.length === 0) {
-    throw new Error(
-      `Không tìm thấy video nào cho hashtag [${job.selectedHashtags.join(', ')}] - thử hashtag khác hoặc tăng APIFY_DISCOVERY_LIMIT`
+    const result = await tiktokService.searchTrendVideosByHashtags(job.selectedHashtags, { topN: 5 });
+
+    if (result.videos.length === 0) {
+      throw new Error(
+        `Không tìm thấy video nào cho hashtag [${job.selectedHashtags.join(', ')}] - thử hashtag khác hoặc tăng APIFY_DISCOVERY_LIMIT`
+      );
+    }
+
+    job.cost.apifyActualUsd += result.apifyActualUsd;
+    recomputeTotalCost(job);
+    // LƯU NGAY raw response TRƯỚC KHI xử lý từng video - dữ liệu này đã tốn
+    // tiền Apify để lấy (xem docstring rawScrapedVideos trong ResearchJob.ts).
+    job.rawScrapedVideos = result.videos as unknown as Record<string, unknown>[];
+    await withDbRetry(() => job.save(), 'Stage2 save rawScrapedVideos');
+
+    rawVideos = result.videos;
+
+    await pushProgress(
+      job,
+      'scraping',
+      `Đã lấy ${result.videos.length} video (tổng ${result.totalFetched} item thô trước khi lọc) và LƯU NGAY raw data. ` +
+        `Chi phí Apify THẬT (2 pass): $${result.apifyActualUsd}`,
+      40,
+      emit
     );
   }
 
-  const userId = job.userId.toString();
-  const jobId = String(job._id);
-
+  // Idempotent MỨC 2 (từng video): video nào đã có TrendVideo cho đúng
+  // {jobId, videoId} rồi thì bỏ qua, không gọi lại fetchTopComments/upsert.
   let savedCount = 0;
-  for (const raw of result.videos) {
+  let skippedCount = 0;
+
+  for (const raw of rawVideos) {
     const normalized = normalizeToTrendVideo(raw, jobId, userId);
+
+    const alreadyExists = await TrendVideo.exists({ jobId, videoId: normalized.videoId });
+    if (alreadyExists) {
+      skippedCount += 1;
+      continue;
+    }
 
     // Lấy comment TUẦN TỰ (không Promise.all) - cùng nguyên tắc tránh dồn
     // request Apify như Stage 3/4 tránh dồn request Gemini.
     const comments = await tiktokService.fetchTopComments(normalized.webVideoUrl, 20);
 
-    await TrendVideo.findOneAndUpdate(
-      { jobId, videoId: normalized.videoId },
-      { $set: { ...normalized, topComments: comments } },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+    await withDbRetry(
+      () =>
+        TrendVideo.findOneAndUpdate(
+          { jobId, videoId: normalized.videoId },
+          { $set: { ...normalized, topComments: comments } },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        ),
+      `Stage2 save TrendVideo ${normalized.videoId}`
     );
     savedCount += 1;
 
     await pushProgress(
       job,
       'scraping',
-      `Đã lưu video ${savedCount}/${result.videos.length} (id=${normalized.videoId}, playCount=${normalized.playCount}) - ${comments.length} comment`,
-      40 + Math.round((savedCount / result.videos.length) * 60),
+      `Đã lưu video ${savedCount + skippedCount}/${rawVideos.length} (id=${normalized.videoId}, playCount=${normalized.playCount}) - ${comments.length} comment`,
+      40 + Math.round(((savedCount + skippedCount) / rawVideos.length) * 60),
       emit
     );
   }
 
-  console.log(`[Pipeline] Stage 2 xong - đã lưu ${savedCount} TrendVideo cho job ${jobId}`);
-  emit('stage_complete', { jobId: job._id, stage: 'scraping', videosCount: savedCount, apifyActualUsd: result.apifyActualUsd });
+  console.log(
+    `[Pipeline] Stage 2 xong - đã lưu ${savedCount} TrendVideo mới (bỏ qua ${skippedCount} đã có sẵn) cho job ${jobId}`
+  );
+  emit('stage_complete', {
+    jobId: job._id,
+    stage: 'scraping',
+    videosCount: savedCount + skippedCount,
+    apifyActualUsd: job.cost.apifyActualUsd,
+  });
 }
 
 // ============================================================
@@ -380,7 +414,7 @@ export async function runStage3Downloading(job: IResearchJob, emit: EmitFn): Pro
     const result = await downloadVideo({ video: downloadable, jobId });
 
     video.downloadStatus = result.status;
-    await video.save();
+    await withDbRetry(() => video.save(), `Stage3 save downloadStatus ${video.videoId}`);
 
     tierCounts[result.source] = (tierCounts[result.source] ?? 0) + 1;
 
@@ -537,13 +571,15 @@ export async function runStage4Analyzing(
         });
       }
 
+      // Lưu analysis NGAY sau khi Gemini trả về, KHÔNG đợi xử lý xong cả 5
+      // video mới ghi 1 lượt - đây là dữ liệu đã tốn tiền Gemini để lấy.
       video.analysis = analysisResult.analysis;
       video.analysisConfidence = analysisResult.analysis.analysisConfidence;
       video.analyzedAt = new Date();
-      await video.save();
+      await withDbRetry(() => video.save(), `Stage4 save analysis ${video.videoId}`);
 
       addGeminiUsage(job, analysisResult.usage);
-      await job.save();
+      await withDbRetry(() => job.save(), `Stage4 save cost ${video.videoId}`);
 
       successCount += 1;
 
@@ -714,39 +750,64 @@ export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn):
     trendContext: buildTrendContext(videos),
   });
 
-  await pushProgress(job, 'generating_scripts', 'Gọi Gemini sinh 5 ý tưởng + kịch bản...', 30, emit);
+  let generatedScripts: ReturnType<typeof GeneratedScriptsSchema.parse>;
 
-  const { text, usage } = await callGeminiJson({
-    label: 'Stage5 generateScripts',
-    model: resolveModel(template),
-    systemPrompt: template.systemPrompt,
-    userPrompt,
-    temperature: template.temperature,
-    responseSchema: SCRIPT_GEN_RESPONSE_SCHEMA,
-  });
+  // Idempotent MỨC 1 (raw data): đã có rawGeneratedScripts lưu sẵn (Gemini đã
+  // trả kết quả, chỉ chưa tạo hết Idea/Script thì bị chết) -> dùng lại
+  // NGUYÊN, không gọi lại Gemini - dữ liệu này đã tốn tiền để sinh ra.
+  if (job.rawGeneratedScripts && job.rawGeneratedScripts.length > 0) {
+    console.log(
+      `[Pipeline] Stage 5 (resume MỨC 1): đã có ${job.rawGeneratedScripts.length} kịch bản Gemini lưu sẵn - bỏ qua gọi lại Gemini.`
+    );
+    generatedScripts = job.rawGeneratedScripts as unknown as typeof generatedScripts;
+  } else {
+    await pushProgress(job, 'generating_scripts', 'Gọi Gemini sinh 5 ý tưởng + kịch bản...', 30, emit);
 
-  addGeminiUsage(job, usage);
-  await job.save();
-
-  const parsed: unknown = JSON.parse(text);
-  const generatedScripts = GeneratedScriptsSchema.parse(parsed);
-
-  await pushProgress(job, 'generating_scripts', `Gemini trả về ${generatedScripts.length} kịch bản, đang lưu...`, 70, emit);
-
-  const resultIdeaIds: IResearchJob['resultIdeaIds'] = [];
-  const resultScriptIds: IResearchJob['resultScriptIds'] = [];
-
-  for (const gs of generatedScripts) {
-    const idea = await Idea.create({
-      userId: job.userId,
-      title: gs.title,
-      description: `[Góc tiếp cận: ${gs.angle}] ${gs.targetPainPoint}`,
-      source: 'research-pipeline',
-      priority: 'medium',
-      status: 'draft',
-      productId: job.productId,
+    const { text, usage } = await callGeminiJson({
+      label: 'Stage5 generateScripts',
+      model: resolveModel(template),
+      systemPrompt: template.systemPrompt,
+      userPrompt,
+      temperature: template.temperature,
+      responseSchema: SCRIPT_GEN_RESPONSE_SCHEMA,
     });
-    resultIdeaIds.push(idea._id);
+
+    addGeminiUsage(job, usage);
+
+    const parsed: unknown = JSON.parse(text);
+    generatedScripts = GeneratedScriptsSchema.parse(parsed);
+
+    // LƯU NGAY kết quả Gemini TRƯỚC KHI tạo Idea/Script - dữ liệu đã tốn
+    // tiền Gemini để sinh ra (xem docstring rawGeneratedScripts trong ResearchJob.ts).
+    job.rawGeneratedScripts = generatedScripts as unknown as Record<string, unknown>[];
+    await withDbRetry(() => job.save(), 'Stage5 save rawGeneratedScripts');
+
+    await pushProgress(job, 'generating_scripts', `Gemini trả về ${generatedScripts.length} kịch bản, đang lưu...`, 70, emit);
+  }
+
+  // Idempotent MỨC 2 (từng item): resultScriptIds.length đóng vai trò "đã
+  // xử lý xong bao nhiêu item" - resume tiếp tục từ đúng chỗ dở, không tạo
+  // trùng Idea/Script cho item đã xong.
+  for (let i = 0; i < generatedScripts.length; i++) {
+    if (job.resultScriptIds.length > i) {
+      continue;
+    }
+
+    const gs = generatedScripts[i];
+
+    const idea = await withDbRetry(
+      () =>
+        Idea.create({
+          userId: job.userId,
+          title: gs.title,
+          description: `[Góc tiếp cận: ${gs.angle}] ${gs.targetPainPoint}`,
+          source: 'research-pipeline',
+          priority: 'medium',
+          status: 'draft',
+          productId: job.productId,
+        }),
+      `Stage5 create Idea ${i}`
+    );
 
     const contentText = [
       `HOOK: ${gs.hook}`,
@@ -757,35 +818,39 @@ export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn):
       `CTA: ${gs.cta}`,
     ].join('\n');
 
-    const script = await Script.create({
-      userId: job.userId,
-      ideaId: idea._id,
-      title: gs.title,
-      content: contentText,
-      format: 'short',
-      callToAction: gs.cta,
-      generatedBy: 'ai',
-      status: 'draft',
-      angle: gs.angle,
-      targetPainPoint: gs.targetPainPoint,
-      body: gs.body,
-      caption: gs.caption,
-      hashtags: gs.hashtags,
-      shotList: gs.shotList,
-      learnedFrom: gs.learnedFrom,
-      confidence: gs.confidence,
-    });
-    resultScriptIds.push(script._id);
-  }
+    const script = await withDbRetry(
+      () =>
+        Script.create({
+          userId: job.userId,
+          ideaId: idea._id,
+          title: gs.title,
+          content: contentText,
+          format: 'short',
+          callToAction: gs.cta,
+          generatedBy: 'ai',
+          status: 'draft',
+          angle: gs.angle,
+          targetPainPoint: gs.targetPainPoint,
+          body: gs.body,
+          caption: gs.caption,
+          hashtags: gs.hashtags,
+          shotList: gs.shotList,
+          learnedFrom: gs.learnedFrom,
+          confidence: gs.confidence,
+        }),
+      `Stage5 create Script ${i}`
+    );
 
-  job.resultIdeaIds = resultIdeaIds;
-  job.resultScriptIds = resultScriptIds;
+    job.resultIdeaIds.push(idea._id);
+    job.resultScriptIds.push(script._id);
+    await withDbRetry(() => job.save(), `Stage5 save result index ${i}`);
+  }
   await setStatus(job, 'completed');
 
   await pushProgress(
     job,
     'generating_scripts',
-    `Hoàn tất - đã tạo ${resultIdeaIds.length} idea + ${resultScriptIds.length} script. ` +
+    `Hoàn tất - đã tạo ${job.resultIdeaIds.length} idea + ${job.resultScriptIds.length} script. ` +
       `Tổng chi phí ước tính: $${job.cost.totalEstimatedUsd} (Apify thật: $${job.cost.apifyActualUsd}, Gemini ước tính: $${job.cost.geminiEstimatedUsd})`,
     100,
     emit
@@ -794,7 +859,7 @@ export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn):
   console.log(
     `[Pipeline] Stage 5 xong - job ${jobId} COMPLETED. Apify thật=$${job.cost.apifyActualUsd}, Gemini ước tính=$${job.cost.geminiEstimatedUsd}`
   );
-  emit('done', { jobId: job._id, resultIdeaIds, resultScriptIds, cost: job.cost });
+  emit('done', { jobId: job._id, resultIdeaIds: job.resultIdeaIds, resultScriptIds: job.resultScriptIds, cost: job.cost });
 }
 
 // ============================================================
@@ -882,7 +947,7 @@ export async function runResearchPipeline(jobId: string, emit: EmitFn = defaultE
 
     job.status = 'failed';
     job.error = { stage, message, at: new Date() };
-    await job.save();
+    await withDbRetry(() => job.save(), 'runResearchPipeline mark failed');
 
     console.error(`[Pipeline] Job ${jobId} THẤT BẠI ở stage "${stage}": ${message}`);
     emit('error', { jobId: job._id, stage, message });
