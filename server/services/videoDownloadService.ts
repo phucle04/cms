@@ -270,6 +270,37 @@ export async function cleanupVideo(filePath: string | null): Promise<void> {
   }
 }
 
+/**
+ * Dọn TOÀN BỘ file tạm của 1 job cụ thể (theo tiền tố "{jobId}-") - gọi khi
+ * pipeline lỗi giữa chừng (researchPipelineService.ts::runResearchPipeline
+ * catch block), đảm bảo "mọi lỗi đều dọn file tạm trước khi thoát" ngay cả
+ * khi lỗi xảy ra ở video chưa kịp tự cleanupVideo() trong Stage 4.
+ */
+export async function cleanupJobTempFiles(jobId: string): Promise<{ deletedCount: number }> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(VIDEO_TMP_DIR);
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return { deletedCount: 0 };
+    throw error;
+  }
+
+  const prefix = `${jobId}-`;
+  let deletedCount = 0;
+
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    await cleanupVideo(path.join(VIDEO_TMP_DIR, entry));
+    deletedCount += 1;
+  }
+
+  if (deletedCount > 0) {
+    console.log(`[VideoDownload] cleanupJobTempFiles(${jobId}): đã dọn ${deletedCount} file tạm`);
+  }
+
+  return { deletedCount };
+}
+
 export async function cleanupOrphans(maxAgeHours: number = 6): Promise<{ deletedCount: number }> {
   let entries: string[];
   try {

@@ -223,9 +223,7 @@ export function normalizeToTrendVideo(
 }
 
 export class TikTokService {
-  private readonly provider = (process.env.TIKTOK_PROVIDER || 'apify').toLowerCase();
   private readonly token = process.env.APIFY_API_TOKEN || '';
-  private readonly actorId = process.env.APIFY_TIKTOK_ACTOR_ID || 'clockworks~tiktok-scraper';
 
   /**
    * PASS 1 (rẻ) - cào rộng theo hashtag, shouldDownloadVideos=FALSE, KHÔNG
@@ -493,67 +491,6 @@ export class TikTokService {
     }
   }
 
-  /**
-   * @deprecated Giữ nguyên tên/hành vi cũ (đổi tên từ `searchByHashtags`) chỉ
-   * để không phá vỡ researchController.ts đang gọi nó. Endpoint (`run-sync`)
-   * và input shape (`{hashtag, maxItems, addMetadata}`) ở đây CHƯA từng được
-   * verify khớp actor schema thật - khác với searchTrendVideosByHashtags()
-   * ở trên (endpoint + input đã verify qua docs actor thật, Giai đoạn 2).
-   * Đừng dùng hàm này cho code mới.
-   */
-  async searchByHashtagsLegacy(hashtags: string[], limitPerTag: number = 5): Promise<TikTokVideo[]> {
-    const normalizedHashtags = hashtags.filter(Boolean).map((tag) => tag.replace(/^#/, '').trim());
-
-    if (!normalizedHashtags.length) {
-      return [];
-    }
-
-    if (!this.token || this.provider !== 'apify') {
-      return this.getMockVideos(normalizedHashtags, limitPerTag);
-    }
-
-    try {
-      const results: TikTokVideo[] = [];
-      for (const hashtag of normalizedHashtags) {
-        const response = await fetch(`https://api.apify.com/v2/acts/${encodeURIComponent(this.actorId)}/run-sync?token=${encodeURIComponent(this.token)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            hashtag,
-            maxItems: limitPerTag,
-            addMetadata: true,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Apify request failed with ${response.status}`);
-        }
-
-        const payload = await response.json().catch(() => ({}));
-        const items = Array.isArray((payload as any)?.defaultDatasetItems)
-          ? (payload as any).defaultDatasetItems
-          : Array.isArray((payload as any)?.items)
-            ? (payload as any).items
-            : [];
-
-        for (const item of items.slice(0, limitPerTag)) {
-          results.push({
-            id: item.id || `${hashtag}-${results.length}`,
-            url: item.url || `https://www.tiktok.com/@example/video/${results.length}`,
-            views: Number(item.playCount || item.views || item.statistics?.playCount || 0),
-            caption: item.text || item.caption || `Trending content for #${hashtag}`,
-            captionsUrl: item.captionsUrl || undefined,
-          });
-        }
-      }
-
-      return this.getTop5ByViews(results);
-    } catch (error) {
-      console.warn('[TikTokService] Provider request failed, using mock fallback:', error);
-      return this.getMockVideos(normalizedHashtags, limitPerTag);
-    }
-  }
-
   getTop5ByViews(videos: TikTokVideo[]): TikTokVideo[] {
     return [...videos]
       .sort((a, b) => b.views - a.views)
@@ -578,23 +515,6 @@ export class TikTokService {
     }
 
     return this.getMockTranscript(video);
-  }
-
-  private getMockVideos(hashtags: string[], limitPerTag: number): TikTokVideo[] {
-    const results: TikTokVideo[] = [];
-    hashtags.forEach((hashtag, idx) => {
-      for (let i = 0; i < Math.min(limitPerTag, 3); i += 1) {
-        const views = 1200000 - (idx * 120000) - (i * 40000);
-        results.push({
-          id: `mock-${hashtag}-${i}`,
-          url: `https://www.tiktok.com/@example/video/${hashtag}-${i}`,
-          views,
-          caption: `Mock viral caption for #${hashtag}: ${['hook', 'problem', 'solution', 'story'][i % 4]} based trend example.`,
-        });
-      }
-    });
-
-    return this.getTop5ByViews(results);
   }
 
   private getMockTranscript(video: TikTokVideo): string {

@@ -9,7 +9,13 @@ import Script from '../models/Script';
 import { GEMINI_MODEL, APIFY_DISCOVERY_LIMIT } from '../config/env';
 import { withGeminiRetry, estimateGeminiCost, type GeminiUsage, type PromptTemplateLike } from './geminiVideoService';
 import { TikTokService, estimateApifyCost, normalizeToTrendVideo } from './tiktokService';
-import { downloadVideo, getVideoFilePath, cleanupVideo, type DownloadableVideo } from './videoDownloadService';
+import {
+  downloadVideo,
+  getVideoFilePath,
+  cleanupVideo,
+  cleanupJobTempFiles,
+  type DownloadableVideo,
+} from './videoDownloadService';
 import { analyzeVideo, analyzeFromTextOnly } from './geminiVideoService';
 import { HashtagSuggestionsSchema, GeneratedScriptsSchema } from '../types/pipeline';
 import type { VideoAnalysis } from '../types/videoAnalysis';
@@ -158,52 +164,66 @@ const HASHTAG_RESPONSE_SCHEMA = {
 
 export async function runStage1GenerateHashtags(job: IResearchJob, emit: EmitFn): Promise<void> {
   await setStatus(job, 'generating_hashtags');
-  await pushProgress(job, 'generating_hashtags', 'Bắt đầu sinh gợi ý hashtag từ sản phẩm...', 0, emit);
 
-  const product = await ProductBrief.findById(job.productId);
-  if (!product) {
-    throw new Error(`Không tìm thấy ProductBrief (id=${job.productId}) cho job này`);
+  // Idempotent cho resumeResearchPipeline: nếu đã có suggestedHashtags từ lần
+  // chạy trước (crash giữa lúc xong Stage 1 và lúc Stage 2 kịp đổi status),
+  // KHÔNG gọi lại Gemini - tốn thêm tiền vô ích cho việc đã xong.
+  let hashtags = job.suggestedHashtags;
+
+  if (hashtags.length > 0) {
+    console.log(`[Pipeline] Stage 1 (resume): đã có ${hashtags.length} suggestedHashtags từ trước - bỏ qua gọi Gemini lại.`);
+    await pushProgress(job, 'generating_hashtags', `Resume: dùng lại ${hashtags.length} gợi ý hashtag đã có`, 50, emit);
+  } else {
+    await pushProgress(job, 'generating_hashtags', 'Bắt đầu sinh gợi ý hashtag từ sản phẩm...', 0, emit);
+
+    const product = await ProductBrief.findById(job.productId);
+    if (!product) {
+      throw new Error(`Không tìm thấy ProductBrief (id=${job.productId}) cho job này`);
+    }
+
+    const brandProfile = job.brandProfileId ? await BrandProfile.findById(job.brandProfileId) : null;
+    const template = await fetchPromptTemplate(job.userId.toString(), 'hashtag');
+
+    const userPrompt = fillTemplate(template.userPromptTemplate, {
+      productName: product.name,
+      productCategory: product.category,
+      brandName: brandProfile?.brandName ?? '(chưa có brand profile)',
+      usp: product.usp,
+      painPoints: product.painPoints ?? '',
+      targetAudience: brandProfile?.targetAudience?.painPoints?.join(', ') ?? '',
+    });
+
+    const { text, usage } = await callGeminiJson({
+      label: 'Stage1 generateHashtags',
+      model: resolveModel(template),
+      systemPrompt: template.systemPrompt,
+      userPrompt,
+      temperature: template.temperature,
+      responseSchema: HASHTAG_RESPONSE_SCHEMA,
+    });
+
+    addGeminiUsage(job, usage);
+
+    const parsed: unknown = JSON.parse(text);
+    hashtags = HashtagSuggestionsSchema.parse(parsed);
+
+    job.suggestedHashtags = hashtags;
+    await job.save();
+
+    await pushProgress(
+      job,
+      'generating_hashtags',
+      `Đã sinh ${hashtags.length} gợi ý hashtag (Gemini: ${usage.inputTokens} in / ${usage.outputTokens} out token, ~$${usage.estimatedUsd})`,
+      100,
+      emit
+    );
   }
 
-  const brandProfile = job.brandProfileId ? await BrandProfile.findById(job.brandProfileId) : null;
-  const template = await fetchPromptTemplate(job.userId.toString(), 'hashtag');
-
-  const userPrompt = fillTemplate(template.userPromptTemplate, {
-    productName: product.name,
-    productCategory: product.category,
-    brandName: brandProfile?.brandName ?? '(chưa có brand profile)',
-    usp: product.usp,
-    painPoints: product.painPoints ?? '',
-    targetAudience: brandProfile?.targetAudience?.painPoints?.join(', ') ?? '',
-  });
-
-  const { text, usage } = await callGeminiJson({
-    label: 'Stage1 generateHashtags',
-    model: resolveModel(template),
-    systemPrompt: template.systemPrompt,
-    userPrompt,
-    temperature: template.temperature,
-    responseSchema: HASHTAG_RESPONSE_SCHEMA,
-  });
-
-  addGeminiUsage(job, usage);
-
-  const parsed: unknown = JSON.parse(text);
-  const hashtags = HashtagSuggestionsSchema.parse(parsed);
-
-  job.suggestedHashtags = hashtags;
-  await job.save();
-
-  await pushProgress(
-    job,
-    'generating_hashtags',
-    `Đã sinh ${hashtags.length} gợi ý hashtag (Gemini: ${usage.inputTokens} in / ${usage.outputTokens} out token, ~$${usage.estimatedUsd})`,
-    100,
-    emit
-  );
-
   if (job.autoSelectTop3) {
-    const top3 = [...hashtags].sort((a, b) => b.score - a.score).slice(0, 3).map((h) => h.tag);
+    const top3 =
+      job.selectedHashtags.length > 0
+        ? job.selectedHashtags
+        : [...hashtags].sort((a, b) => b.score - a.score).slice(0, 3).map((h) => h.tag);
     job.selectedHashtags = top3;
     await job.save();
 
@@ -230,6 +250,19 @@ export async function runStage1GenerateHashtags(job: IResearchJob, emit: EmitFn)
 
 export async function runStage2Scraping(job: IResearchJob, emit: EmitFn): Promise<void> {
   await setStatus(job, 'scraping');
+  const jobIdEarly = String(job._id);
+
+  // Idempotent cho resume: nếu Stage 2 đã lưu TrendVideo cho job này từ lần
+  // chạy trước (crash giữa lúc xong Stage 2 và lúc Stage 3 kịp đổi status),
+  // KHÔNG gọi lại Apify lần nữa - đây chính là phần tốn tiền nhất của cả job.
+  const existingCount = await TrendVideo.countDocuments({ jobId: jobIdEarly });
+  if (existingCount > 0) {
+    console.log(`[Pipeline] Stage 2 (resume): đã có ${existingCount} TrendVideo cho job này - bỏ qua gọi Apify lại.`);
+    await pushProgress(job, 'scraping', `Resume: dùng lại ${existingCount} video đã cào từ trước`, 100, emit);
+    emit('stage_complete', { jobId: job._id, stage: 'scraping', videosCount: existingCount, apifyActualUsd: 0 });
+    return;
+  }
+
   await pushProgress(job, 'scraping', `Bắt đầu cào video cho hashtag: [${job.selectedHashtags.join(', ')}]`, 0, emit);
 
   if (job.selectedHashtags.length === 0) {
@@ -316,6 +349,20 @@ export async function runStage3Downloading(job: IResearchJob, emit: EmitFn): Pro
 
   for (const video of videos) {
     idx += 1;
+
+    // Idempotent cho resume: video này đã được thử tải ở lần chạy trước
+    // (downloadStatus khác 'pending') -> bỏ qua, không tải lại.
+    if (video.downloadStatus !== 'pending') {
+      tierCounts[`resume:${video.downloadStatus}`] = (tierCounts[`resume:${video.downloadStatus}`] ?? 0) + 1;
+      await pushProgress(
+        job,
+        'downloading',
+        `Video ${idx}/${videos.length} (id=${video.videoId}): resume, đã có downloadStatus=${video.downloadStatus} từ trước - bỏ qua`,
+        Math.round((idx / videos.length) * 100),
+        emit
+      );
+      continue;
+    }
 
     const downloadable: DownloadableVideo = {
       videoId: video.videoId,
@@ -406,6 +453,22 @@ export async function runStage4Analyzing(job: IResearchJob, emit: EmitFn): Promi
 
   for (const video of videos) {
     idx += 1;
+
+    // Idempotent cho resume: video này đã phân tích xong ở lần chạy trước
+    // (analyzedAt đã set) -> bỏ qua, không gọi lại Gemini (tốn tiền + có
+    // thể đã xoá file tạm rồi nên không tải lại được nữa).
+    if (video.analyzedAt) {
+      successCount += 1;
+      await pushProgress(
+        job,
+        'analyzing',
+        `Video ${idx}/${videos.length} (id=${video.videoId}): resume, đã phân tích xong từ trước - bỏ qua`,
+        Math.round((idx / videos.length) * 100),
+        emit
+      );
+      continue;
+    }
+
     const filePath = getVideoFilePath(jobId, video.videoId);
     const hasDownloadedFile = video.downloadStatus === 'downloaded_apify' || video.downloadStatus === 'downloaded_ytdlp';
 
@@ -587,6 +650,15 @@ export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn):
   await setStatus(job, 'generating_scripts');
   const jobId = String(job._id);
 
+  // Idempotent cho resume: đã tạo script ở lần chạy trước rồi (crash ngay
+  // trước khi kịp set status='completed') -> không sinh lại lần 2.
+  if (job.resultScriptIds.length > 0) {
+    console.log(`[Pipeline] Stage 5 (resume): job đã có ${job.resultScriptIds.length} script từ trước - bỏ qua sinh lại.`);
+    await setStatus(job, 'completed');
+    emit('done', { jobId: job._id, resultIdeaIds: job.resultIdeaIds, resultScriptIds: job.resultScriptIds, cost: job.cost });
+    return;
+  }
+
   await pushProgress(job, 'generating_scripts', 'Tổng hợp dữ liệu từ sản phẩm + brand + video đã phân tích...', 0, emit);
 
   const videos = await TrendVideo.find({ jobId, analysis: { $exists: true } }).sort({ playCount: -1 });
@@ -695,4 +767,114 @@ export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn):
     `[Pipeline] Stage 5 xong - job ${jobId} COMPLETED. Apify thật=$${job.cost.apifyActualUsd}, Gemini ước tính=$${job.cost.geminiEstimatedUsd}`
   );
   emit('done', { jobId: job._id, resultIdeaIds, resultScriptIds, cost: job.cost });
+}
+
+// ============================================================
+// ORCHESTRATOR - runResearchPipeline / resumeResearchPipeline
+// ============================================================
+
+const STAGE_ORDER: ResearchJobStatus[] = [
+  'queued',
+  'generating_hashtags',
+  'scraping',
+  'downloading',
+  'analyzing',
+  'generating_scripts',
+];
+
+function stageIndexForStatus(status: ResearchJobStatus): number {
+  const idx = STAGE_ORDER.indexOf(status);
+  return idx === -1 ? 0 : idx;
+}
+
+/**
+ * Điểm vào DUY NHẤT để chạy pipeline. Đọc job.status hiện tại để biết bắt
+ * đầu từ stage nào - vì mỗi stage đều tự kiểm tra "đã làm chưa" trước khi
+ * làm lại (xem ghi chú "Idempotent cho resume" ở từng stage), gọi hàm này
+ * nhiều lần trên cùng 1 job (kể cả từ đầu) đều an toàn về mặt CHI PHÍ, không
+ * trả tiền 2 lần cho phần đã xong.
+ *
+ * Lỗi ở BẤT KỲ stage nào (không riêng gì Stage 5) đều: set status='failed',
+ * ghi error{stage,message,at} bằng tiếng Việt dễ hiểu, dọn mọi file tạm còn
+ * sót của job (cleanupJobTempFiles), rồi throw lại cho caller (Giai đoạn 3C
+ * sẽ bắt lỗi này để trả về SSE/HTTP).
+ */
+export async function runResearchPipeline(jobId: string, emit: EmitFn = defaultEmit): Promise<void> {
+  const job = await ResearchJob.findById(jobId);
+  if (!job) {
+    throw new Error(`Không tìm thấy ResearchJob (id=${jobId})`);
+  }
+
+  if (job.status === 'completed') {
+    console.log(`[Pipeline] Job ${jobId} đã completed từ trước - không chạy lại (tránh tốn tiền vô ích).`);
+    return;
+  }
+
+  // Job từng 'failed' - resume từ ĐÚNG stage đã lỗi (lưu trong error.stage),
+  // KHÔNG phải làm lại từ đầu. Nếu vì lý do gì đó error.stage rỗng/lạ, an
+  // toàn nhất là coi như status hiện tại (rơi về stage 1).
+  const effectiveStatus: ResearchJobStatus =
+    job.status === 'failed' && job.error?.stage && STAGE_ORDER.includes(job.error.stage as ResearchJobStatus)
+      ? (job.error.stage as ResearchJobStatus)
+      : job.status;
+
+  const startIndex = stageIndexForStatus(effectiveStatus);
+  console.log(
+    `[Pipeline] runResearchPipeline(${jobId}): bắt đầu/resume từ stage index ${startIndex} ` +
+      `(status hiện tại="${job.status}", effectiveStatus="${effectiveStatus}")`
+  );
+
+  try {
+    if (startIndex <= 1) {
+      await runStage1GenerateHashtags(job, emit);
+    }
+
+    if (job.status === 'awaiting_hashtag_selection') {
+      console.log(
+        `[Pipeline] Job ${jobId} DỪNG chờ người dùng chọn hashtag - gọi lại runResearchPipeline(jobId) sau khi đã set selectedHashtags.`
+      );
+      return;
+    }
+
+    if (stageIndexForStatus(job.status) <= 2) {
+      await runStage2Scraping(job, emit);
+    }
+    if (stageIndexForStatus(job.status) <= 3) {
+      await runStage3Downloading(job, emit);
+    }
+    if (stageIndexForStatus(job.status) <= 4) {
+      await runStage4Analyzing(job, emit);
+    }
+    if (stageIndexForStatus(job.status) <= 5) {
+      await runStage5GenerateScripts(job, emit);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const stage = job.status;
+
+    job.status = 'failed';
+    job.error = { stage, message, at: new Date() };
+    await job.save();
+
+    console.error(`[Pipeline] Job ${jobId} THẤT BẠI ở stage "${stage}": ${message}`);
+    emit('error', { jobId: job._id, stage, message });
+
+    const { deletedCount } = await cleanupJobTempFiles(jobId);
+    if (deletedCount > 0) {
+      console.log(`[Pipeline] Đã dọn ${deletedCount} file tạm còn sót của job ${jobId} trước khi thoát.`);
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * Alias có chủ đích cho runResearchPipeline - cùng logic hệt nhau (đọc
+ * status hiện tại, mỗi stage tự bỏ qua phần đã xong). Tách tên riêng để gọi
+ * ý rõ ràng ở call site: "đây là lần GỌI LẠI sau khi job đã dừng/lỗi",
+ * không phải lần chạy đầu tiên.
+ */
+export async function resumeResearchPipeline(jobId: string, emit: EmitFn = defaultEmit): Promise<void> {
+  console.log(`[Pipeline] resumeResearchPipeline(${jobId}) - chạy lại từ stage đang dở, KHÔNG làm lại từ đầu.`);
+  return runResearchPipeline(jobId, emit);
 }
