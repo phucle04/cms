@@ -421,11 +421,13 @@ export class TikTokService {
 
   /**
    * Lấy top comment của 1 video qua 1 lần gọi actor bổ sung (postURLs).
-   * KHÔNG có tài liệu công khai xác nhận chính xác shape của comment item
-   * (chỉ biết actor trả về field `commentsDatasetURL` trỏ tới 1 dataset
-   * riêng) - hàm này vì vậy hoàn toàn phòng thủ: bất kỳ bước nào thất bại
-   * hoặc field không khớp kỳ vọng đều trả mảng RỖNG, KHÔNG throw, để không
-   * làm chết cả job phân tích chỉ vì lấy comment thất bại.
+   * Đã VERIFY THẬT (2026-07-27): field đúng là `commentsDatasetUrl` (chữ
+   * "rl" thường - bug ban đầu dùng nhầm `commentsDatasetURL` hoa khiến hàm
+   * này luôn trả [] dù comment thật tồn tại, đã sửa). Shape comment item đã
+   * verify thật: { text, diggCount, uniqueId, cid, replyCommentTotal, ... }.
+   * Vẫn giữ toàn bộ logic phòng thủ (try/catch, kiểm tra kiểu dữ liệu từng
+   * field) vì Apify không cam kết hợp đồng field chính thức qua docs công
+   * khai - bất kỳ bước nào thất bại đều trả mảng RỖNG, KHÔNG throw.
    */
   async fetchTopComments(
     videoUrl: string,
@@ -456,11 +458,11 @@ export class TikTokService {
       if (!Array.isArray(data) || data.length === 0) return [];
 
       const item = data[0] as ApifyTikTokResult | undefined;
-      const commentsDatasetURL = item?.commentsDatasetURL;
-      if (!commentsDatasetURL) return [];
+      const commentsDatasetUrl = item?.commentsDatasetUrl;
+      if (!commentsDatasetUrl) return [];
 
       const commentsRes = await fetchWithTimeout(
-        `${commentsDatasetURL}${commentsDatasetURL.includes('?') ? '&' : '?'}token=${encodeURIComponent(this.token)}`,
+        `${commentsDatasetUrl}${commentsDatasetUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(this.token)}`,
         {},
         30_000
       );

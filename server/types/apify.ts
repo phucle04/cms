@@ -47,12 +47,14 @@ export interface ApifyTikTokResult {
   };
   /**
    * Chỉ xuất hiện khi input có commentsPerPost/topLevelCommentsPerPost - trỏ
-   * tới 1 dataset RIÊNG chứa comment (đã xác nhận qua docs actor, nhưng
-   * KHÔNG có tài liệu công khai mô tả chính xác shape từng comment item -
-   * fetchTopComments() trong tiktokService.ts vì vậy parse phòng thủ và trả
-   * mảng rỗng nếu không khớp kỳ vọng, không throw).
+   * tới 1 dataset RIÊNG chứa comment. Đã VERIFY THẬT (2026-07-27, xem báo cáo
+   * lượt pipeline F1-S2): tên field CHÍNH XÁC là "commentsDatasetUrl" (chữ
+   * "rl" thường, không phải "URL" hoa) - bug ban đầu ở đây khiến
+   * fetchTopComments() luôn trả [] dù comment thật tồn tại. Shape 1 comment
+   * item đã verify thật: { text, diggCount, uniqueId, cid, replyCommentTotal,
+   * createTimeISO, avatarThumbnail, ... }.
    */
-  commentsDatasetURL?: string;
+  commentsDatasetUrl?: string;
 }
 
 /**

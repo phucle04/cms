@@ -3,9 +3,10 @@ import ResearchJob, { IResearchJob, ResearchJobStatus } from '../models/Research
 import ProductBrief from '../models/ProductBrief';
 import BrandProfile from '../models/BrandProfile';
 import PromptTemplate from '../models/PromptTemplate';
+import TrendVideo from '../models/TrendVideo';
 import { GEMINI_MODEL, APIFY_DISCOVERY_LIMIT } from '../config/env';
 import { withGeminiRetry, estimateGeminiCost, type GeminiUsage, type PromptTemplateLike } from './geminiVideoService';
-import { TikTokService, estimateApifyCost } from './tiktokService';
+import { TikTokService, estimateApifyCost, normalizeToTrendVideo } from './tiktokService';
 import { HashtagSuggestionsSchema } from '../types/pipeline';
 
 /**
@@ -215,4 +216,69 @@ export async function runStage1GenerateHashtags(job: IResearchJob, emit: EmitFn)
     console.log(`[Pipeline] Stage 1 xong - autoSelectTop3=false, DỪNG chờ người dùng chọn hashtag (jobId=${job._id}).`);
     emit('stage_complete', { jobId: job._id, stage: 'awaiting_hashtag_selection', suggestedHashtags: hashtags });
   }
+}
+
+// ============================================================
+// STAGE 2 - scraping
+// ============================================================
+
+export async function runStage2Scraping(job: IResearchJob, emit: EmitFn): Promise<void> {
+  await setStatus(job, 'scraping');
+  await pushProgress(job, 'scraping', `Bắt đầu cào video cho hashtag: [${job.selectedHashtags.join(', ')}]`, 0, emit);
+
+  if (job.selectedHashtags.length === 0) {
+    throw new Error('Không có hashtag nào được chọn (selectedHashtags rỗng) - không thể cào video');
+  }
+
+  const tiktokService = new TikTokService();
+  const result = await tiktokService.searchTrendVideosByHashtags(job.selectedHashtags, { topN: 5 });
+
+  job.cost.apifyActualUsd += result.apifyActualUsd;
+  recomputeTotalCost(job);
+  await job.save();
+
+  await pushProgress(
+    job,
+    'scraping',
+    `Đã lấy ${result.videos.length} video (tổng ${result.totalFetched} item thô trước khi lọc). ` +
+      `Chi phí Apify THẬT (2 pass): $${result.apifyActualUsd}`,
+    40,
+    emit
+  );
+
+  if (result.videos.length === 0) {
+    throw new Error(
+      `Không tìm thấy video nào cho hashtag [${job.selectedHashtags.join(', ')}] - thử hashtag khác hoặc tăng APIFY_DISCOVERY_LIMIT`
+    );
+  }
+
+  const userId = job.userId.toString();
+  const jobId = String(job._id);
+
+  let savedCount = 0;
+  for (const raw of result.videos) {
+    const normalized = normalizeToTrendVideo(raw, jobId, userId);
+
+    // Lấy comment TUẦN TỰ (không Promise.all) - cùng nguyên tắc tránh dồn
+    // request Apify như Stage 3/4 tránh dồn request Gemini.
+    const comments = await tiktokService.fetchTopComments(normalized.webVideoUrl, 20);
+
+    await TrendVideo.findOneAndUpdate(
+      { jobId, videoId: normalized.videoId },
+      { $set: { ...normalized, topComments: comments } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    savedCount += 1;
+
+    await pushProgress(
+      job,
+      'scraping',
+      `Đã lưu video ${savedCount}/${result.videos.length} (id=${normalized.videoId}, playCount=${normalized.playCount}) - ${comments.length} comment`,
+      40 + Math.round((savedCount / result.videos.length) * 60),
+      emit
+    );
+  }
+
+  console.log(`[Pipeline] Stage 2 xong - đã lưu ${savedCount} TrendVideo cho job ${jobId}`);
+  emit('stage_complete', { jobId: job._id, stage: 'scraping', videosCount: savedCount, apifyActualUsd: result.apifyActualUsd });
 }
