@@ -1,15 +1,18 @@
 import { GoogleGenAI } from '@google/genai';
 import ResearchJob, { IResearchJob, ResearchJobStatus } from '../models/ResearchJob';
-import ProductBrief from '../models/ProductBrief';
+import ProductBrief, { IProductBrief } from '../models/ProductBrief';
 import BrandProfile from '../models/BrandProfile';
 import PromptTemplate from '../models/PromptTemplate';
-import TrendVideo from '../models/TrendVideo';
+import TrendVideo, { ITrendVideo } from '../models/TrendVideo';
+import Idea from '../models/Idea';
+import Script from '../models/Script';
 import { GEMINI_MODEL, APIFY_DISCOVERY_LIMIT } from '../config/env';
 import { withGeminiRetry, estimateGeminiCost, type GeminiUsage, type PromptTemplateLike } from './geminiVideoService';
 import { TikTokService, estimateApifyCost, normalizeToTrendVideo } from './tiktokService';
 import { downloadVideo, getVideoFilePath, cleanupVideo, type DownloadableVideo } from './videoDownloadService';
 import { analyzeVideo, analyzeFromTextOnly } from './geminiVideoService';
-import { HashtagSuggestionsSchema } from '../types/pipeline';
+import { HashtagSuggestionsSchema, GeneratedScriptsSchema } from '../types/pipeline';
+import type { VideoAnalysis } from '../types/videoAnalysis';
 import fs from 'fs/promises';
 
 /**
@@ -487,4 +490,209 @@ export async function runStage4Analyzing(job: IResearchJob, emit: EmitFn): Promi
 
   console.log(`[Pipeline] Stage 4 xong - ${successCount}/${videos.length} video phân tích thành công`);
   emit('stage_complete', { jobId: job._id, stage: 'analyzing', successCount, total: videos.length });
+}
+
+// ============================================================
+// STAGE 5 - generating_scripts
+// ============================================================
+
+const SCRIPT_GEN_RESPONSE_SCHEMA = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      title: { type: 'string' },
+      angle: { type: 'string' },
+      targetPainPoint: { type: 'string' },
+      hook: { type: 'string' },
+      body: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            tStart: { type: 'number' },
+            tEnd: { type: 'number' },
+            voiceover: { type: 'string' },
+            visual: { type: 'string' },
+            textOnScreen: { type: 'string' },
+          },
+          required: ['tStart', 'tEnd', 'voiceover', 'visual', 'textOnScreen'],
+        },
+      },
+      cta: { type: 'string' },
+      caption: { type: 'string' },
+      hashtags: { type: 'array', items: { type: 'string' } },
+      shotList: { type: 'array', items: { type: 'string' } },
+      learnedFrom: { type: 'array', items: { type: 'string' } },
+      confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+    },
+    required: [
+      'title',
+      'angle',
+      'targetPainPoint',
+      'hook',
+      'body',
+      'cta',
+      'caption',
+      'hashtags',
+      'shotList',
+      'learnedFrom',
+      'confidence',
+    ],
+  },
+} as const;
+
+function buildProductContext(product: IProductBrief): string {
+  const parts = [`Tên sản phẩm: ${product.name}`, `Ngành hàng: ${product.category}`, `USP: ${product.usp}`];
+  if (product.painPoints) parts.push(`Pain point đã biết: ${product.painPoints}`);
+  if (product.faqContent) parts.push(`FAQ: ${product.faqContent}`);
+  if (product.socialProof) parts.push(`Social proof: ${product.socialProof}`);
+  if (product.keywords && product.keywords.length > 0) parts.push(`Từ khoá: ${product.keywords.join(', ')}`);
+  return parts.join('\n');
+}
+
+function buildTrendContext(videos: ITrendVideo[]): string {
+  return videos
+    .map((v, i) => {
+      const analysis = v.analysis as VideoAnalysis | undefined;
+      const commentsText =
+        v.topComments && v.topComments.length > 0
+          ? v.topComments
+              .slice(0, 5)
+              .map((c) => `  - "${c.text}" (${c.likeCount} like, @${c.authorHandle})`)
+              .join('\n')
+          : '  (không có comment)';
+
+      return [
+        `--- Video #${i + 1} (id=${v.videoId}, playCount=${v.playCount}, độ tin cậy phân tích=${v.analysisConfidence ?? 'unknown'}) ---`,
+        `Caption: ${v.caption}`,
+        analysis ? `Hook 3 giây đầu: ${analysis.hook?.firstThreeSeconds ?? ''}` : '',
+        analysis ? `Giả thuyết viral: ${analysis.viralHypothesis ?? ''}` : '',
+        analysis ? `CTA gốc: ${analysis.cta ?? ''}` : '',
+        `Bình luận nổi bật (pain point THẬT bằng ngôn ngữ khách hàng):\n${commentsText}`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+    })
+    .join('\n\n');
+}
+
+/**
+ * Gộp ProductBrief + BrandProfile (đặc biệt doList/dontList/complianceNotes -
+ * ràng buộc CỨNG, nhúng nguyên văn vào prompt) + 5 analysis + toàn bộ
+ * topComments -> Gemini sinh đúng 5 {idea, script} theo 5 góc tiếp cận khác
+ * nhau. Tạo Idea (status='draft') + Script (mỗi idea 1 script) tương ứng.
+ */
+export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn): Promise<void> {
+  await setStatus(job, 'generating_scripts');
+  const jobId = String(job._id);
+
+  await pushProgress(job, 'generating_scripts', 'Tổng hợp dữ liệu từ sản phẩm + brand + video đã phân tích...', 0, emit);
+
+  const videos = await TrendVideo.find({ jobId, analysis: { $exists: true } }).sort({ playCount: -1 });
+  if (videos.length < MIN_VIDEOS_WITH_ANALYSIS) {
+    throw new Error(
+      `Chỉ có ${videos.length} video có analysis - cần tối thiểu ${MIN_VIDEOS_WITH_ANALYSIS} để sinh kịch bản đáng tin cậy`
+    );
+  }
+
+  const product = await ProductBrief.findById(job.productId);
+  if (!product) {
+    throw new Error(`Không tìm thấy ProductBrief (id=${job.productId}) cho job này`);
+  }
+
+  const brandProfile = job.brandProfileId ? await BrandProfile.findById(job.brandProfileId) : null;
+  const template = await fetchPromptTemplate(job.userId.toString(), 'script_gen');
+
+  const userPrompt = fillTemplate(template.userPromptTemplate, {
+    productContext: buildProductContext(product),
+    brandName: brandProfile?.brandName ?? '(chưa có brand profile)',
+    toneOfVoice: brandProfile?.toneOfVoice ?? '',
+    dontList: brandProfile?.dontList && brandProfile.dontList.length > 0 ? brandProfile.dontList.join('; ') : '(không có ràng buộc đặc biệt)',
+    doList: brandProfile?.doList && brandProfile.doList.length > 0 ? brandProfile.doList.join('; ') : '',
+    complianceNotes: brandProfile?.complianceNotes ?? '',
+    trendContext: buildTrendContext(videos),
+  });
+
+  await pushProgress(job, 'generating_scripts', 'Gọi Gemini sinh 5 ý tưởng + kịch bản...', 30, emit);
+
+  const { text, usage } = await callGeminiJson({
+    label: 'Stage5 generateScripts',
+    model: resolveModel(template),
+    systemPrompt: template.systemPrompt,
+    userPrompt,
+    temperature: template.temperature,
+    responseSchema: SCRIPT_GEN_RESPONSE_SCHEMA,
+  });
+
+  addGeminiUsage(job, usage);
+  await job.save();
+
+  const parsed: unknown = JSON.parse(text);
+  const generatedScripts = GeneratedScriptsSchema.parse(parsed);
+
+  await pushProgress(job, 'generating_scripts', `Gemini trả về ${generatedScripts.length} kịch bản, đang lưu...`, 70, emit);
+
+  const resultIdeaIds: IResearchJob['resultIdeaIds'] = [];
+  const resultScriptIds: IResearchJob['resultScriptIds'] = [];
+
+  for (const gs of generatedScripts) {
+    const idea = await Idea.create({
+      userId: job.userId,
+      title: gs.title,
+      description: `[Góc tiếp cận: ${gs.angle}] ${gs.targetPainPoint}`,
+      source: 'research-pipeline',
+      priority: 'medium',
+      status: 'draft',
+      productId: job.productId,
+    });
+    resultIdeaIds.push(idea._id);
+
+    const contentText = [
+      `HOOK: ${gs.hook}`,
+      ...gs.body.map(
+        (b) =>
+          `[${b.tStart}s-${b.tEnd}s] ${b.voiceover} (Hình ảnh: ${b.visual}${b.textOnScreen ? `; Chữ trên màn hình: ${b.textOnScreen}` : ''})`
+      ),
+      `CTA: ${gs.cta}`,
+    ].join('\n');
+
+    const script = await Script.create({
+      userId: job.userId,
+      ideaId: idea._id,
+      title: gs.title,
+      content: contentText,
+      format: 'short',
+      callToAction: gs.cta,
+      generatedBy: 'ai',
+      status: 'draft',
+      angle: gs.angle,
+      targetPainPoint: gs.targetPainPoint,
+      body: gs.body,
+      caption: gs.caption,
+      hashtags: gs.hashtags,
+      shotList: gs.shotList,
+      learnedFrom: gs.learnedFrom,
+      confidence: gs.confidence,
+    });
+    resultScriptIds.push(script._id);
+  }
+
+  job.resultIdeaIds = resultIdeaIds;
+  job.resultScriptIds = resultScriptIds;
+  await setStatus(job, 'completed');
+
+  await pushProgress(
+    job,
+    'generating_scripts',
+    `Hoàn tất - đã tạo ${resultIdeaIds.length} idea + ${resultScriptIds.length} script. ` +
+      `Tổng chi phí ước tính: $${job.cost.totalEstimatedUsd} (Apify thật: $${job.cost.apifyActualUsd}, Gemini ước tính: $${job.cost.geminiEstimatedUsd})`,
+    100,
+    emit
+  );
+
+  console.log(
+    `[Pipeline] Stage 5 xong - job ${jobId} COMPLETED. Apify thật=$${job.cost.apifyActualUsd}, Gemini ước tính=$${job.cost.geminiEstimatedUsd}`
+  );
+  emit('done', { jobId: job._id, resultIdeaIds, resultScriptIds, cost: job.cost });
 }

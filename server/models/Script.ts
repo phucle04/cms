@@ -1,5 +1,13 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
 
+export interface IScriptBodySegment {
+  tStart: number;
+  tEnd: number;
+  voiceover: string;
+  visual: string;
+  textOnScreen: string;
+}
+
 export interface IScript extends Document {
   userId: Types.ObjectId;
   ideaId: Types.ObjectId;
@@ -13,6 +21,18 @@ export interface IScript extends Document {
   generatedBy?: string;
   status: 'draft' | 'approved' | 'rejected';
   feedback?: string;
+  // Field mở rộng cho kịch bản do pipeline research sinh ra (Giai đoạn 3,
+  // researchPipelineService.ts Stage 5) - content/callToAction ở trên vẫn
+  // được điền (bản text rút gọn, tương thích ngược với UI/tính năng cũ đọc
+  // 2 field đó), còn field dưới đây giữ đầy đủ cấu trúc gốc theo timeline.
+  angle?: string;
+  targetPainPoint?: string;
+  body?: IScriptBodySegment[];
+  caption?: string;
+  hashtags?: string[];
+  shotList?: string[];
+  learnedFrom?: string[];
+  confidence?: 'high' | 'medium' | 'low';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -39,9 +59,34 @@ const scriptSchema = new Schema<IScript>(
       default: 'draft',
     },
     feedback: String,
+    angle: String,
+    targetPainPoint: String,
+    body: [
+      {
+        tStart: Number,
+        tEnd: Number,
+        voiceover: String,
+        visual: String,
+        textOnScreen: String,
+      },
+    ],
+    caption: String,
+    hashtags: [String],
+    shotList: [String],
+    learnedFrom: [String],
+    confidence: { type: String, enum: ['high', 'medium', 'low'] },
   },
   { timestamps: true }
 );
+
+scriptSchema.set('toJSON', {
+  virtuals: true,
+  transform: (_doc: any, ret: any) => {
+    ret.id = ret._id.toString();
+    delete ret._id;
+    delete ret.__v;
+  },
+});
 
 scriptSchema.index({ userId: 1, ideaId: 1, status: 1 });
 

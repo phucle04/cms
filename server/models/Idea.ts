@@ -6,9 +6,12 @@ export interface IIdea extends Document {
   description: string;
   source: string;
   priority: 'low' | 'medium' | 'high';
-  status: 'new' | 'in progress' | 'done' | 'discarded';
-  productId?: string;
-  relatedTrends?: string[];
+  // 'draft' thêm cho idea do pipeline research tự sinh (Giai đoạn 3, chờ
+  // người dùng duyệt trước khi coi là 'new'/actionable) - không đổi default,
+  // idea tạo tay qua createIdea() vẫn mặc định 'new' như cũ.
+  status: 'draft' | 'new' | 'in progress' | 'done' | 'discarded';
+  productId?: Types.ObjectId;
+  relatedTrends?: Types.ObjectId[];
   notes?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -27,7 +30,7 @@ const ideaSchema = new Schema<IIdea>(
     },
     status: {
       type: String,
-      enum: ['new', 'in progress', 'done', 'discarded'],
+      enum: ['draft', 'new', 'in progress', 'done', 'discarded'],
       default: 'new',
     },
     productId: { type: Schema.Types.ObjectId, ref: 'ProductBrief' },
