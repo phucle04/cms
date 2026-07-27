@@ -14,15 +14,15 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 
     const variants = {
       primary:
-        'bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 focus-visible:ring-blue-500',
+        'bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-ring',
       secondary:
-        'bg-gray-100 text-gray-900 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700 focus-visible:ring-gray-500',
+        'bg-secondary text-secondary-foreground hover:bg-secondary/80 focus-visible:ring-ring',
       outline:
-        'border border-gray-300 text-gray-900 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-100 dark:hover:bg-gray-900 focus-visible:ring-gray-500',
+        'border border-input text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring',
       ghost:
-        'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 focus-visible:ring-gray-500',
+        'text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring',
       destructive:
-        'bg-red-600 text-white hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-700 focus-visible:ring-red-500',
+        'bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive',
     };
 
     const sizes = {
@@ -41,7 +41,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         {isLoading ? (
           <div className="flex items-center gap-2">
             <Spinner size="sm" />
-            <span>Loading...</span>
+            <span>Đang xử lý...</span>
           </div>
         ) : (
           children

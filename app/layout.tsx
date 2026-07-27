@@ -1,14 +1,24 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
+import { Be_Vietnam_Pro } from 'next/font/google'
 import './globals.css'
 import { AppProvider } from '@/contexts/AppContext'
-import { Sidebar } from '@/components/layout/Sidebar'
-import { Header } from '@/components/layout/Header'
+import { AppShell } from '@/components/layout/AppShell'
 import { ModalProvider } from '@/components/providers/ModalProvider'
 
+const beVietnamPro = Be_Vietnam_Pro({
+  subsets: ['latin', 'latin-ext', 'vietnamese'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-be-vietnam-pro',
+  display: 'swap',
+})
+
 export const metadata: Metadata = {
-  title: 'Content Management System',
-  description: 'Comprehensive CMS for content production workflow',
+  title: {
+    default: 'Hệ thống quản lý nội dung',
+    template: '%s | Hệ thống quản lý nội dung',
+  },
+  description: 'Hệ thống sản xuất nội dung: sản phẩm, nghiên cứu TikTok, ý tưởng, kịch bản',
   generator: 'v0.app',
   icons: {
     icon: [
@@ -43,15 +53,11 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
-      <body className="antialiased bg-gray-50 dark:bg-gray-900">
+    <html lang="vi" className={beVietnamPro.variable}>
+      <body className="antialiased font-sans bg-background text-foreground">
         <ModalProvider>
           <AppProvider>
-            <Sidebar />
-            <Header />
-            <main className="lg:ml-64 pt-16 min-h-screen">
-              {children}
-            </main>
+            <AppShell>{children}</AppShell>
             {process.env.NODE_ENV === 'production' && <Analytics />}
           </AppProvider>
         </ModalProvider>

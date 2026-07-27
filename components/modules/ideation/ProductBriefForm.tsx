@@ -14,10 +14,10 @@ import { FormSelect } from '@/components/common/FormSelect';
 import { Plus, X } from 'lucide-react';
 
 const productBriefSchema = z.object({
-  name: z.string().min(1, 'Product name required'),
-  category: z.string().min(1, 'Category required'),
-  usp: z.string().min(1, 'USP required'),
-  painPoints: z.string().min(1, 'Pain points required'),
+  name: z.string().min(1, 'Vui lòng nhập tên sản phẩm'),
+  category: z.string().min(1, 'Vui lòng nhập ngành hàng'),
+  usp: z.string().min(1, 'Vui lòng nhập USP'),
+  painPoints: z.string().min(1, 'Vui lòng nhập nỗi đau khách hàng'),
   faqContent: z.string().optional(),
   socialProof: z.string().optional(),
   comparison: z.string().optional(),
@@ -78,11 +78,11 @@ export function ProductBriefForm({
         updatedAt: new Date(),
       });
       
-      toast.success(initialData ? 'Product brief updated' : 'Product brief created');
+      toast.success(initialData ? 'Đã cập nhật sản phẩm' : 'Đã tạo sản phẩm');
       reset();
       onClose();
     } catch (error) {
-      toast.error('Failed to save product brief');
+      toast.error('Lưu sản phẩm thất bại');
     } finally {
       setIsSubmitting(false);
     }
@@ -92,18 +92,18 @@ export function ProductBriefForm({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={initialData ? 'Edit Product Brief' : 'Create Product Brief'}
+      title={initialData ? 'Sửa sản phẩm' : 'Tạo sản phẩm'}
       size="xl"
       footer={
         <>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            Huỷ
           </Button>
           <Button
             onClick={handleSubmit(onSubmit)}
             isLoading={isSubmitting}
           >
-            {initialData ? 'Update' : 'Create'} Product
+            {initialData ? 'Cập nhật' : 'Tạo'} sản phẩm
           </Button>
         </>
       }
@@ -111,70 +111,70 @@ export function ProductBriefForm({
       <form className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <FormInput
-            label="Product Name"
-            placeholder="e.g., Ultra Pro Camera"
+            label="Tên sản phẩm"
+            placeholder="VD: Máy ảnh Ultra Pro"
             {...register('name')}
             error={errors.name}
           />
           <FormInput
-            label="Category"
-            placeholder="e.g., Photography Equipment"
+            label="Ngành hàng"
+            placeholder="VD: Thiết bị nhiếp ảnh"
             {...register('category')}
             error={errors.category}
           />
         </div>
 
         <FormTextarea
-          label="Unique Selling Proposition (USP)"
-          placeholder="What makes this product unique?"
+          label="Điểm bán hàng độc nhất (USP)"
+          placeholder="Điều gì làm sản phẩm này khác biệt?"
           {...register('usp')}
           error={errors.usp}
-          helperText="Keywords separated by commas will be auto-generated"
+          helperText="Từ khoá cách nhau bởi dấu phẩy sẽ được tự sinh"
         />
 
         <FormTextarea
-          label="Pain Points Solved"
-          placeholder="What problems does this solve for customers?"
+          label="Nỗi đau khách hàng"
+          placeholder="Sản phẩm giải quyết vấn đề gì cho khách hàng?"
           {...register('painPoints')}
           error={errors.painPoints}
         />
 
         <FormTextarea
-          label="FAQ Content"
-          placeholder="Frequently asked questions and answers..."
+          label="Câu hỏi thường gặp"
+          placeholder="Các câu hỏi và câu trả lời thường gặp..."
           {...register('faqContent')}
         />
 
         <FormTextarea
-          label="Social Proof"
-          placeholder="Testimonials, reviews, success metrics..."
+          label="Bằng chứng xã hội"
+          placeholder="Đánh giá, phản hồi, số liệu thành công..."
           {...register('socialProof')}
         />
 
         <FormTextarea
-          label="Comparison"
-          placeholder="How it compares to competitors..."
+          label="So sánh với đối thủ"
+          placeholder="So sánh với sản phẩm đối thủ..."
           {...register('comparison')}
         />
 
         <FormTextarea
-          label="Shooting Tips"
-          placeholder="Best practices for creating content with this product..."
+          label="Gợi ý quay/chụp"
+          placeholder="Cách quay/chụp nội dung tốt nhất cho sản phẩm này..."
           {...register('shootingTips')}
         />
 
         <FormInput
-          label="Media URL"
+          label="URL hình ảnh"
           type="url"
           placeholder="https://example.com/product-image.jpg"
           {...register('mediaUrl')}
         />
 
         <FormSelect
-          label="Status"
+          label="Trạng thái"
           options={[
-            { value: 'active', label: 'Active' },
-            { value: 'archived', label: 'Archived' },
+            { value: 'active', label: 'Đang hoạt động' },
+            { value: 'archived', label: 'Đã lưu trữ' },
           ]}
           {...register('status')}
           error={errors.status}

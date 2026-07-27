@@ -29,7 +29,7 @@ export function StatsCard({ title, value, change, icon, className }: StatsCardPr
                     : 'text-red-600 dark:text-red-400'
                 )}
               >
-                {isPositive ? '+' : ''}{change}% from last period
+                {isPositive ? '+' : ''}{change}% so với kỳ trước
               </p>
             )}
           </div>

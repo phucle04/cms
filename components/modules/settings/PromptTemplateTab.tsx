@@ -109,13 +109,13 @@ function TemplateEditor({
         </div>
 
         <FormTextarea
-          label="System Prompt (vai trò của AI)"
+          label="Prompt hệ thống (vai trò của AI)"
           value={systemPrompt}
           onChange={(e) => setSystemPrompt(e.target.value)}
           className="min-h-24"
         />
         <FormTextarea
-          label="User Prompt Template (nội dung yêu cầu, dùng placeholder ở trên)"
+          label="Mẫu prompt người dùng (nội dung yêu cầu, dùng placeholder ở trên)"
           value={userPromptTemplate}
           onChange={(e) => setUserPromptTemplate(e.target.value)}
           className="min-h-56 font-mono text-xs"

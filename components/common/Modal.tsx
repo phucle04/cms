@@ -49,14 +49,14 @@ export function Modal({
       />
 
       {/* Modal */}
-      <div className={`relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-h-[90vh] overflow-y-auto ${sizeClasses[size]} w-full mx-4`}>
+      <div className={`relative bg-card text-card-foreground rounded-lg shadow-modal max-h-[90vh] overflow-y-auto ${sizeClasses[size]} w-full mx-4`}>
         {/* Header */}
-        <div className="sticky top-0 flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h2>
+        <div className="sticky top-0 flex items-center justify-between p-6 border-b border-border bg-card">
+          <h2 className="text-lg font-semibold text-foreground">{title}</h2>
           <button
             onClick={onClose}
-            className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
-            aria-label="Close modal"
+            className="text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+            aria-label="Đóng"
           >
             <X size={20} />
           </button>
@@ -67,7 +67,7 @@ export function Modal({
 
         {/* Footer */}
         {footer && (
-          <div className="sticky bottom-0 flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50">
+          <div className="sticky bottom-0 flex items-center justify-end gap-3 p-6 border-t border-border bg-muted/50">
             {footer}
           </div>
         )}

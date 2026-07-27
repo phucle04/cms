@@ -86,7 +86,7 @@ export function TrendVideoCard({ video }: TrendVideoCardProps) {
 
                     {video.analysis.structure.length > 0 && (
                       <div>
-                        <p className="font-semibold text-gray-900 dark:text-white mb-1">Timeline</p>
+                        <p className="font-semibold text-gray-900 dark:text-white mb-1">Diễn biến theo thời gian</p>
                         <div className="space-y-1">
                           {video.analysis.structure.map((s, i) => (
                             <div key={i} className="flex gap-2 text-gray-600 dark:text-gray-400">

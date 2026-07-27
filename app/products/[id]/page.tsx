@@ -4,9 +4,12 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Sparkles, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Sparkles } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
+import { Modal } from '@/components/common/Modal';
+import { StatusBadge } from '@/components/common/StatusBadge';
+import { ErrorState } from '@/components/common/ErrorState';
 import { Skeleton } from '@/components/ui/skeleton';
 import * as API from '@/lib/api';
 import * as Types from '@/lib/types';
@@ -28,6 +31,7 @@ export default function ProductDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creatingJob, setCreatingJob] = useState(false);
+  const [showCreateJobConfirm, setShowCreateJobConfirm] = useState(false);
 
   const loadProduct = async () => {
     setLoading(true);
@@ -48,6 +52,7 @@ export default function ProductDetailPage() {
   }, [params.id]);
 
   const handleCreateResearchJob = async () => {
+    setShowCreateJobConfirm(false);
     setCreatingJob(true);
     try {
       const { jobId } = await API.ResearchJobAPI.create(params.id, false);
@@ -72,10 +77,8 @@ export default function ProductDetailPage() {
     return (
       <div className="p-6">
         <Card>
-          <CardContent className="py-12 text-center space-y-4">
-            <AlertTriangle className="mx-auto text-red-500" size={32} />
-            <p className="text-gray-600 dark:text-gray-400">{error || 'Không tìm thấy sản phẩm'}</p>
-            <Button onClick={loadProduct}>Thử lại</Button>
+          <CardContent>
+            <ErrorState message={error || 'Không tìm thấy sản phẩm'} onRetry={loadProduct} />
           </CardContent>
         </Card>
       </div>
@@ -85,7 +88,7 @@ export default function ProductDetailPage() {
   return (
     <div className="p-6 space-y-6 max-w-3xl">
       <Link
-        href="/ideation"
+        href="/products"
         className="inline-flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
       >
         <ArrowLeft size={14} /> Danh sách sản phẩm
@@ -97,15 +100,7 @@ export default function ProductDetailPage() {
             <CardTitle className="text-xl">{product.name}</CardTitle>
             <CardDescription>{product.category}</CardDescription>
           </div>
-          <span
-            className={`px-2 py-1 rounded text-xs font-semibold whitespace-nowrap ${
-              product.status === 'active'
-                ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-                : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-400'
-            }`}
-          >
-            {product.status === 'active' ? 'Đang hoạt động' : 'Đã lưu trữ'}
-          </span>
+          <StatusBadge domain="product" value={product.status} />
         </CardHeader>
         <CardContent className="space-y-4">
           <Field label="Điểm bán hàng độc nhất (USP)" value={product.usp} />
@@ -137,12 +132,34 @@ export default function ProductDetailPage() {
               AI sẽ gợi ý hashtag, cào video viral, phân tích và sinh 5 kịch bản dựa trên sản phẩm này.
             </p>
           </div>
-          <Button onClick={handleCreateResearchJob} isLoading={creatingJob}>
+          <Button onClick={() => setShowCreateJobConfirm(true)} isLoading={creatingJob}>
             <Sparkles size={16} className="mr-2" />
             Tạo kịch bản từ sản phẩm này
           </Button>
         </CardContent>
       </Card>
+
+      <Modal
+        isOpen={showCreateJobConfirm}
+        onClose={() => setShowCreateJobConfirm(false)}
+        title="Bắt đầu nghiên cứu TikTok?"
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setShowCreateJobConfirm(false)}>
+              Huỷ
+            </Button>
+            <Button onClick={handleCreateResearchJob} isLoading={creatingJob}>
+              Bắt đầu
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Thao tác này sẽ gọi AI để gợi ý hashtag rồi cào/tải/phân tích video TikTok - tốn chi phí Apify và Gemini thật.
+          Bạn có chắc muốn tạo job nghiên cứu cho sản phẩm &quot;{product.name}&quot;?
+        </p>
+      </Modal>
     </div>
   );
 }

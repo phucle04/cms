@@ -5,33 +5,14 @@ import Link from 'next/link';
 import { ChevronLeft, ChevronRight, History } from 'lucide-react';
 import { Card, CardContent } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
+import { PageHeader } from '@/components/common/PageHeader';
+import { StatusBadge } from '@/components/common/StatusBadge';
+import { EmptyState } from '@/components/common/EmptyState';
+import { ErrorState } from '@/components/common/ErrorState';
+import { formatRelativeTime, formatDateTime, formatCurrency } from '@/lib/format';
 import { Skeleton } from '@/components/ui/skeleton';
 import * as API from '@/lib/api';
 import * as Types from '@/lib/types';
-
-const STATUS_LABEL: Record<Types.ResearchJobStatus, string> = {
-  queued: 'Đang chờ',
-  generating_hashtags: 'Đang sinh hashtag',
-  awaiting_hashtag_selection: 'Chờ chọn hashtag',
-  scraping: 'Đang cào TikTok',
-  downloading: 'Đang tải video',
-  analyzing: 'Đang phân tích',
-  generating_scripts: 'Đang sinh kịch bản',
-  completed: 'Hoàn tất',
-  failed: 'Thất bại',
-};
-
-const STATUS_COLOR: Record<Types.ResearchJobStatus, string> = {
-  queued: 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-400',
-  generating_hashtags: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
-  awaiting_hashtag_selection: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
-  scraping: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
-  downloading: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
-  analyzing: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
-  generating_scripts: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
-  completed: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
-  failed: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400',
-};
 
 function productName(productId: Types.ResearchJob['productId']): string {
   if (typeof productId === 'string') return productId;
@@ -66,13 +47,11 @@ export default function ResearchHistoryPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-          <History size={28} />
-          Lịch sử Research
-        </h1>
-        <p className="text-gray-600 dark:text-gray-400 mt-2">Danh sách các job nghiên cứu xu hướng TikTok đã chạy</p>
-      </div>
+      <PageHeader
+        title="Nghiên cứu TikTok"
+        description="Danh sách các job nghiên cứu xu hướng TikTok đã chạy"
+        icon={<History size={28} />}
+      />
 
       {loading && (
         <div className="space-y-3">
@@ -84,17 +63,19 @@ export default function ResearchHistoryPage() {
 
       {!loading && error && (
         <Card>
-          <CardContent className="py-12 text-center space-y-4">
-            <p className="text-gray-600 dark:text-gray-400">{error}</p>
-            <Button onClick={() => load(page)}>Thử lại</Button>
+          <CardContent>
+            <ErrorState message={error} onRetry={() => load(page)} />
           </CardContent>
         </Card>
       )}
 
       {!loading && !error && jobs.length === 0 && (
         <Card>
-          <CardContent className="py-12 text-center text-gray-500 dark:text-gray-400">
-            Chưa có job research nào. Vào trang sản phẩm và bấm &quot;Tạo kịch bản từ sản phẩm này&quot; để bắt đầu.
+          <CardContent>
+            <EmptyState
+              title="Chưa có job research nào"
+              description='Vào trang sản phẩm và bấm "Nghiên cứu TikTok" để bắt đầu.'
+            />
           </CardContent>
         </Card>
       )}
@@ -107,13 +88,11 @@ export default function ResearchHistoryPage() {
                 <CardContent className="py-4 flex items-center justify-between gap-4 flex-wrap">
                   <div>
                     <p className="font-medium text-gray-900 dark:text-white">{productName(job.productId)}</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-                      {new Date(job.createdAt).toLocaleString('vi-VN')} · ${job.cost.totalEstimatedUsd.toFixed(4)}
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5" title={formatDateTime(job.createdAt)}>
+                      {formatRelativeTime(job.createdAt)} · {formatCurrency(job.cost.totalEstimatedUsd)}
                     </p>
                   </div>
-                  <span className={`px-2.5 py-1 rounded text-xs font-semibold whitespace-nowrap ${STATUS_COLOR[job.status]}`}>
-                    {STATUS_LABEL[job.status]}
-                  </span>
+                  <StatusBadge domain="researchJob" value={job.status} />
                 </CardContent>
               </Card>
             </Link>

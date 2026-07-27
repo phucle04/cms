@@ -1,195 +1,157 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/common/Card';
-import { Button } from '@/components/common/Button';
 import { StatsCard } from '@/components/common/StatsCard';
+import { PageHeader } from '@/components/common/PageHeader';
+import { StatusBadge } from '@/components/common/StatusBadge';
+import { ErrorState } from '@/components/common/ErrorState';
+import { EmptyState } from '@/components/common/EmptyState';
+import { formatRelativeTime, formatDateTime } from '@/lib/format';
 import * as API from '@/lib/api';
 import * as Types from '@/lib/types';
-import { TrendingUp, Video, Eye, MessageCircle, ArrowRight } from 'lucide-react';
-import Link from 'next/link';
+import { Package, Lightbulb, Search, FileText, ArrowRight, History } from 'lucide-react';
+
+function productName(productId: Types.ResearchJob['productId']): string {
+  if (typeof productId === 'string') return productId;
+  return productId.name;
+}
+
+const STEPS = [
+  { label: 'Sản phẩm', href: '/products', icon: Package, desc: 'Tạo hồ sơ sản phẩm' },
+  { label: 'Nghiên cứu', href: '/research', icon: Search, desc: 'Cào & phân tích TikTok' },
+  { label: 'Ý tưởng', href: '/ideation', icon: Lightbulb, desc: 'Duyệt ý tưởng nội dung' },
+  { label: 'Kịch bản', href: '/scripts', icon: FileText, desc: 'Xem & dùng kịch bản' },
+];
 
 export default function DashboardPage() {
-  const [topVideos, setTopVideos] = useState<Types.VideoKPI[]>([]);
-  const [totalStats, setTotalStats] = useState({
-    ideas: 0,
-    products: 0,
-    trends: 0,
-    scripts: 0,
-  });
+  const [stats, setStats] = useState({ products: 0, ideas: 0, jobs: 0, scripts: 0 });
+  const [recentJobs, setRecentJobs] = useState<Types.ResearchJob[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [products, ideas, jobsResult, scripts] = await Promise.all([
+        API.ProductAPI.list(),
+        API.IdeaAPI.list(),
+        API.ResearchJobAPI.list(1, 5),
+        API.ResearchScriptAPI.list(),
+      ]);
+      setStats({
+        products: products.length,
+        ideas: ideas.length,
+        jobs: jobsResult.pagination.total,
+        scripts: scripts.length,
+      });
+      setRecentJobs(jobsResult.data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Không tải được dữ liệu tổng quan');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    async function loadDashboardData() {
-      try {
-        const [videos, ideas, products, trends, scripts] = await Promise.all([
-          API.KPIAPI.getTopPerformers(5),
-          API.IdeaAPI.list(),
-          API.ProductAPI.list(),
-          API.TrendAPI.list(),
-          API.ScriptAPI.list(),
-        ]);
-
-        setTopVideos(videos);
-        setTotalStats({
-          ideas: ideas.length,
-          products: products.length,
-          trends: trends.length,
-          scripts: scripts.length,
-        });
-      } catch (error) {
-        console.error('Failed to load dashboard data:', error);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadDashboardData();
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <div className="p-6 space-y-6">
-      {/* Overview Stats */}
+      <PageHeader title="Tổng quan" description="Toàn cảnh hệ thống sản xuất nội dung" />
+
+      {error && (
+        <Card>
+          <CardContent>
+            <ErrorState message={error} onRetry={load} />
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatsCard
-          title="Ideas"
-          value={totalStats.ideas}
-          icon={<Video size={24} />}
-        />
-        <StatsCard
-          title="Products"
-          value={totalStats.products}
-          icon={<TrendingUp size={24} />}
-        />
-        <StatsCard
-          title="Trends"
-          value={totalStats.trends}
-          icon={<Eye size={24} />}
-        />
-        <StatsCard
-          title="Scripts"
-          value={totalStats.scripts}
-          icon={<MessageCircle size={24} />}
-        />
+        <StatsCard title="Sản phẩm" value={loading ? '—' : stats.products} icon={<Package size={24} />} />
+        <StatsCard title="Ý tưởng" value={loading ? '—' : stats.ideas} icon={<Lightbulb size={24} />} />
+        <StatsCard title="Job nghiên cứu" value={loading ? '—' : stats.jobs} icon={<Search size={24} />} />
+        <StatsCard title="Kịch bản" value={loading ? '—' : stats.scripts} icon={<FileText size={24} />} />
       </div>
 
-      {/* Quick Actions */}
       <Card>
         <CardHeader>
-          <CardTitle>Quick Actions</CardTitle>
-          <CardDescription>Get started with your content workflow</CardDescription>
+          <CardTitle>Bắt đầu từ đâu?</CardTitle>
+          <CardDescription>Quy trình 4 bước: Sản phẩm → Nghiên cứu → Ý tưởng → Kịch bản</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Link href="/ideation" className="block">
-              <Button variant="outline" className="w-full justify-center">
-                <span>Create Idea</span>
-                <ArrowRight size={16} className="ml-2" />
-              </Button>
-            </Link>
-            <Link href="/research" className="block">
-              <Button variant="outline" className="w-full justify-center">
-                <span>Research</span>
-                <ArrowRight size={16} className="ml-2" />
-              </Button>
-            </Link>
-            <Link href="/scripting" className="block">
-              <Button variant="outline" className="w-full justify-center">
-                <span>Write Script</span>
-                <ArrowRight size={16} className="ml-2" />
-              </Button>
-            </Link>
-            <Link href="/analytics" className="block">
-              <Button variant="outline" className="w-full justify-center">
-                <span>View Analytics</span>
-                <ArrowRight size={16} className="ml-2" />
-              </Button>
-            </Link>
+            {STEPS.map((step, i) => (
+              <Link key={step.href} href={step.href} className="block">
+                <div className="h-full p-4 rounded-lg border border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900/50 transition-colors">
+                  <div className="flex items-center gap-2 text-gray-400 dark:text-gray-600 text-xs font-semibold mb-2">
+                    <span>BƯỚC {i + 1}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-gray-900 dark:text-white font-medium">
+                    <step.icon size={18} />
+                    {step.label}
+                  </div>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{step.desc}</p>
+                  <ArrowRight size={14} className="mt-2 text-gray-400 dark:text-gray-600" />
+                </div>
+              </Link>
+            ))}
           </div>
         </CardContent>
       </Card>
 
-      {/* Top Performing Videos */}
       <Card>
-        <CardHeader>
-          <CardTitle>Top Performing Videos</CardTitle>
-          <CardDescription>Your best-performing content this period</CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <History size={18} />
+              Job gần đây
+            </CardTitle>
+            <CardDescription>5 job nghiên cứu TikTok mới nhất</CardDescription>
+          </div>
+          <Link href="/research" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">
+            Xem tất cả
+          </Link>
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="text-center py-8 text-gray-500">Loading...</div>
-          ) : topVideos.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">No videos yet</div>
+            <div className="space-y-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="h-14 w-full rounded-lg bg-gray-100 dark:bg-gray-900 animate-pulse" />
+              ))}
+            </div>
+          ) : recentJobs.length === 0 ? (
+            <EmptyState
+              title="Chưa có job nghiên cứu nào"
+              description='Vào trang Sản phẩm và bấm "Nghiên cứu TikTok" để bắt đầu.'
+              action={
+                <Link href="/products">
+                  <span className="text-sm text-primary hover:underline">Đi tới trang Sản phẩm</span>
+                </Link>
+              }
+            />
           ) : (
-            <div className="space-y-4">
-              {topVideos.map((video) => (
-                <div
-                  key={video.id}
-                  className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-800 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
-                >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                        video.rank === 'S' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' :
-                        video.rank === 'A' ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400' :
-                        video.rank === 'B' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400' :
-                        'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-400'
-                      }`}>
-                        Rank {video.rank}
-                      </span>
+            <div className="space-y-2">
+              {recentJobs.map((job) => (
+                <Link key={job.id} href={`/research/${job.id}`}>
+                  <div className="flex items-center justify-between gap-4 p-3 rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-900/50 transition-colors flex-wrap">
+                    <div>
+                      <p className="font-medium text-gray-900 dark:text-white">{productName(job.productId)}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5" title={formatDateTime(job.createdAt)}>
+                        {formatRelativeTime(job.createdAt)}
+                      </p>
                     </div>
-                    <div className="mt-2 grid grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <p className="text-gray-500 dark:text-gray-400">Views</p>
-                        <p className="text-lg font-semibold text-gray-900 dark:text-white">{(video.views / 1000).toFixed(0)}K</p>
-                      </div>
-                      <div>
-                        <p className="text-gray-500 dark:text-gray-400">Likes</p>
-                        <p className="text-lg font-semibold text-gray-900 dark:text-white">{(video.likes / 1000).toFixed(1)}K</p>
-                      </div>
-                      <div>
-                        <p className="text-gray-500 dark:text-gray-400">Comments</p>
-                        <p className="text-lg font-semibold text-gray-900 dark:text-white">{(video.comments / 1000).toFixed(1)}K</p>
-                      </div>
-                    </div>
+                    <StatusBadge domain="researchJob" value={job.status} />
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      {/* Getting Started Guide */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Getting Started</CardTitle>
-          <CardDescription>New to the CMS? Start with these modules</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3 text-sm">
-            <div className="flex gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-700 dark:text-blue-400 font-semibold">1</div>
-              <div>
-                <p className="font-medium text-gray-900 dark:text-white">Set up your brand voice in Research & Strategy</p>
-                <p className="text-gray-600 dark:text-gray-400">Define your tone, personality, and messaging guidelines</p>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-700 dark:text-blue-400 font-semibold">2</div>
-              <div>
-                <p className="font-medium text-gray-900 dark:text-white">Create product briefs for content ideas</p>
-                <p className="text-gray-600 dark:text-gray-400">Organize product information and USPs for easier reference</p>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-700 dark:text-blue-400 font-semibold">3</div>
-              <div>
-                <p className="font-medium text-gray-900 dark:text-white">Start with concept ideation</p>
-                <p className="text-gray-600 dark:text-gray-400">Create and organize your content ideas with priorities</p>
-              </div>
-            </div>
-          </div>
         </CardContent>
       </Card>
     </div>

@@ -25,7 +25,7 @@ export function Tabs({
   children,
   className,
 }: TabsProps) {
-  const [internalValue, setInternalValue] = useState(defaultValue || value);
+  const [internalValue, setInternalValue] = useState(defaultValue || value || '');
   const currentValue = value !== undefined ? value : internalValue;
 
   const handleValueChange = (newValue: string) => {
@@ -82,11 +82,11 @@ export function TabsTrigger({ value, children, className }: TabsTriggerProps) {
         'px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap',
         isActive
           ? 'bg-white dark:bg-gray-950 text-blue-700 dark:text-blue-400 shadow-sm'
-          : 'text-gray-700 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-300'
+          : 'text-gray-700 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-300',
+        className
       )}
       role="tab"
       aria-selected={isActive}
-      {...(className ? { className } : {})}
     >
       {children}
     </button>

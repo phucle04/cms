@@ -8,6 +8,10 @@ import { ArrowLeft, AlertTriangle, Wifi, WifiOff } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/common/Tabs';
+import { StatusBadge } from '@/components/common/StatusBadge';
+import { EmptyState } from '@/components/common/EmptyState';
+import { ErrorState } from '@/components/common/ErrorState';
+import { formatRelativeTime, formatDateTime, formatCurrency } from '@/lib/format';
 import { Skeleton } from '@/components/ui/skeleton';
 import { JobStageProgress } from '@/components/modules/research/JobStageProgress';
 import { HashtagSelectionPanel } from '@/components/modules/research/HashtagSelectionPanel';
@@ -107,10 +111,8 @@ export default function ResearchJobPage() {
     return (
       <div className="p-6">
         <Card>
-          <CardContent className="py-12 text-center space-y-4">
-            <AlertTriangle className="mx-auto text-red-500" size={32} />
-            <p className="text-gray-600 dark:text-gray-400">{error}</p>
-            <Button onClick={reload}>Thử lại</Button>
+          <CardContent>
+            <ErrorState message={error} onRetry={reload} />
           </CardContent>
         </Card>
       </div>
@@ -135,14 +137,15 @@ export default function ResearchJobPage() {
           >
             <ArrowLeft size={14} /> Lịch sử research
           </Link>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2 flex-wrap">
             Research:{' '}
             <Link href={`/products/${productLinkId(job.productId)}`} className="hover:underline">
               {productName(job.productId)}
             </Link>
+            <StatusBadge domain="researchJob" value={job.status} />
           </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Chi phí ước tính: ${job.cost.totalEstimatedUsd.toFixed(4)} · Tạo lúc {new Date(job.createdAt).toLocaleString('vi-VN')}
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1" title={formatDateTime(job.createdAt)}>
+            Chi phí ước tính: {formatCurrency(job.cost.totalEstimatedUsd)} · Tạo {formatRelativeTime(job.createdAt)}
           </p>
         </div>
         <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
@@ -163,7 +166,7 @@ export default function ResearchJobPage() {
       </Card>
 
       {job.status === 'failed' && (
-        <Card className="border-red-300 dark:border-red-900">
+        <Card className="border-destructive/50">
           <CardContent className="pt-6 space-y-3">
             <div className="flex items-start gap-3">
               <AlertTriangle className="text-red-500 shrink-0 mt-0.5" size={20} />
@@ -197,8 +200,8 @@ export default function ResearchJobPage() {
           {videosLoading && <VideoGridSkeleton />}
           {videosPending && (
             <Card>
-              <CardContent className="py-10 text-center text-gray-500 dark:text-gray-400">
-                Video sẽ xuất hiện sau khi cào xong TikTok.
+              <CardContent>
+                <EmptyState title="Video sẽ xuất hiện sau khi cào xong TikTok" />
               </CardContent>
             </Card>
           )}
@@ -215,8 +218,8 @@ export default function ResearchJobPage() {
           {scriptsLoading && <ScriptListSkeleton />}
           {scriptsPending && (
             <Card>
-              <CardContent className="py-10 text-center text-gray-500 dark:text-gray-400">
-                Kịch bản sẽ xuất hiện sau khi phân tích xong video và sinh kịch bản.
+              <CardContent>
+                <EmptyState title="Kịch bản sẽ xuất hiện sau khi phân tích xong video và sinh kịch bản" />
               </CardContent>
             </Card>
           )}

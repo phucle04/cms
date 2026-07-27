@@ -42,6 +42,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",

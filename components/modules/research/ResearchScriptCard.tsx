@@ -1,8 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { Copy, Send, RefreshCw } from 'lucide-react';
+import { Copy, Send, ExternalLink } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Badge } from '@/components/ui/badge';
@@ -26,7 +28,8 @@ interface ResearchScriptCardProps {
 }
 
 export function ResearchScriptCard({ script, index }: ResearchScriptCardProps) {
-  const [pushing, setPushing] = useState(false);
+  const router = useRouter();
+  const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(script.status);
   const hook = extractHook(script.content);
 
@@ -39,21 +42,30 @@ export function ResearchScriptCard({ script, index }: ResearchScriptCardProps) {
     }
   };
 
-  const handlePushToScripting = async () => {
-    setPushing(true);
+  const handleSaveToScripts = async () => {
+    setSaving(true);
     try {
       const updated = await API.ResearchScriptAPI.update(script.id, { status: 'approved' });
       setStatus(updated.status);
-      toast.success('Đã đẩy sang Scripting');
+      toast.success((t) => (
+        <span className="flex items-center gap-3">
+          Đã lưu vào Kịch bản
+          <button
+            onClick={() => {
+              toast.dismiss(t.id);
+              router.push(`/scripts/${script.id}`);
+            }}
+            className="underline font-medium whitespace-nowrap"
+          >
+            Xem ngay
+          </button>
+        </span>
+      ));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Đẩy sang Scripting thất bại');
+      toast.error(e instanceof Error ? e.message : 'Lưu vào Kịch bản thất bại');
     } finally {
-      setPushing(false);
+      setSaving(false);
     }
-  };
-
-  const handleRegenerate = () => {
-    toast.error('Tính năng "Tạo lại kịch bản này" cần bổ sung 1 API backend riêng (sinh lại đúng 1 kịch bản) - chưa có ở giai đoạn này.');
   };
 
   return (
@@ -66,7 +78,7 @@ export function ResearchScriptCard({ script, index }: ResearchScriptCardProps) {
           <div className="flex items-center gap-2 flex-wrap mt-2">
             {script.angle && <Badge variant="secondary">{script.angle}</Badge>}
             {script.confidence && <Badge variant="outline">{CONFIDENCE_LABEL[script.confidence] ?? script.confidence}</Badge>}
-            {status === 'approved' && <Badge>Đã đẩy sang Scripting</Badge>}
+            {status === 'approved' && <Badge>Đã lưu vào Kịch bản</Badge>}
           </div>
         </div>
       </CardHeader>
@@ -80,14 +92,14 @@ export function ResearchScriptCard({ script, index }: ResearchScriptCardProps) {
 
         {hook && (
           <div>
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Hook</p>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Hook (câu mở đầu)</p>
             <p className="text-sm text-gray-600 dark:text-gray-400">{hook}</p>
           </div>
         )}
 
         {script.body && script.body.length > 0 && (
           <div>
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Timeline</p>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Diễn biến theo thời gian</p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm border-collapse">
                 <thead>
@@ -151,12 +163,17 @@ export function ResearchScriptCard({ script, index }: ResearchScriptCardProps) {
           <Button variant="outline" size="sm" onClick={handleCopyAll}>
             <Copy size={14} className="mr-1.5" /> Copy toàn bộ
           </Button>
-          <Button variant="outline" size="sm" onClick={handlePushToScripting} isLoading={pushing} disabled={status === 'approved'}>
-            <Send size={14} className="mr-1.5" /> {status === 'approved' ? 'Đã đẩy sang Scripting' : 'Đẩy sang Scripting'}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={handleRegenerate}>
-            <RefreshCw size={14} className="mr-1.5" /> Tạo lại kịch bản này
-          </Button>
+          {status === 'approved' ? (
+            <Link href={`/scripts/${script.id}`}>
+              <Button variant="outline" size="sm">
+                <ExternalLink size={14} className="mr-1.5" /> Xem trong Kịch bản
+              </Button>
+            </Link>
+          ) : (
+            <Button variant="outline" size="sm" onClick={handleSaveToScripts} isLoading={saving}>
+              <Send size={14} className="mr-1.5" /> Lưu vào Kịch bản
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

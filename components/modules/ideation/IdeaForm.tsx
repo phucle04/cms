@@ -13,11 +13,11 @@ import { FormTextarea } from '@/components/common/FormTextarea';
 import { FormSelect } from '@/components/common/FormSelect';
 
 const ideaSchema = z.object({
-  title: z.string().min(1, 'Title required'),
-  description: z.string().min(1, 'Description required'),
-  source: z.string().min(1, 'Source required'),
+  title: z.string().min(1, 'Vui lòng nhập tiêu đề'),
+  description: z.string().min(1, 'Vui lòng nhập mô tả'),
+  source: z.string().min(1, 'Vui lòng nhập nguồn'),
   priority: z.enum(['low', 'medium', 'high']),
-  status: z.enum(['new', 'in progress', 'done', 'discarded']),
+  status: z.enum(['draft', 'new', 'in progress', 'done', 'discarded']),
   productId: z.string().optional(),
 });
 
@@ -64,11 +64,11 @@ export function IdeaForm({
     try {
       await new Promise(resolve => setTimeout(resolve, 600));
       onSave(data);
-      toast.success(initialData ? 'Idea updated' : 'Idea created');
+      toast.success(initialData ? 'Đã cập nhật ý tưởng' : 'Đã tạo ý tưởng');
       reset();
       onClose();
     } catch (error) {
-      toast.error('Failed to save idea');
+      toast.error('Lưu ý tưởng thất bại');
     } finally {
       setIsSubmitting(false);
     }
@@ -78,69 +78,70 @@ export function IdeaForm({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={initialData ? 'Edit Idea' : 'Create Idea'}
+      title={initialData ? 'Sửa ý tưởng' : 'Tạo ý tưởng'}
       size="lg"
       footer={
         <>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            Huỷ
           </Button>
           <Button
             onClick={handleSubmit(onSubmit)}
             isLoading={isSubmitting}
           >
-            {initialData ? 'Update' : 'Create'} Idea
+            {initialData ? 'Cập nhật' : 'Tạo'} ý tưởng
           </Button>
         </>
       }
     >
       <form className="space-y-4">
         <FormInput
-          label="Title"
-          placeholder="Content idea title..."
+          label="Tiêu đề"
+          placeholder="Tiêu đề ý tưởng nội dung..."
           {...register('title')}
           error={errors.title}
         />
 
         <FormTextarea
-          label="Description"
-          placeholder="Detailed description of the content idea..."
+          label="Mô tả"
+          placeholder="Mô tả chi tiết ý tưởng nội dung..."
           {...register('description')}
           error={errors.description}
         />
 
         <FormInput
-          label="Source"
-          placeholder="Where did this idea come from? (e.g., Competitor, Trend, Community)"
+          label="Nguồn"
+          placeholder="Ý tưởng này đến từ đâu? (VD: Đối thủ, Xu hướng, Cộng đồng)"
           {...register('source')}
           error={errors.source}
         />
 
         <FormSelect
-          label="Priority"
+          label="Ưu tiên"
           options={[
-            { value: 'low', label: 'Low' },
-            { value: 'medium', label: 'Medium' },
-            { value: 'high', label: 'High' },
+            { value: 'low', label: 'Thấp' },
+            { value: 'medium', label: 'Trung bình' },
+            { value: 'high', label: 'Cao' },
           ]}
           {...register('priority')}
           error={errors.priority}
         />
 
         <FormSelect
-          label="Status"
+          label="Trạng thái"
           options={[
-            { value: 'new', label: 'New' },
-            { value: 'in progress', label: 'In Progress' },
-            { value: 'done', label: 'Done' },
-            { value: 'discarded', label: 'Discarded' },
+            { value: 'draft', label: 'Nháp' },
+            { value: 'new', label: 'Mới' },
+            { value: 'in progress', label: 'Đang làm' },
+            { value: 'done', label: 'Hoàn thành' },
+            { value: 'discarded', label: 'Đã huỷ' },
           ]}
           {...register('status')}
           error={errors.status}
         />
 
         <FormSelect
-          label="Link to Product (Optional)"
+          label="Liên kết sản phẩm (tuỳ chọn)"
           options={products.map(p => ({ value: p.id, label: p.name }))}
           {...register('productId')}
         />
