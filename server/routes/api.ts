@@ -3,8 +3,10 @@ import { optionalAuth } from '../middleware/auth';
 import * as ideaController from '../controllers/ideaController';
 import * as productController from '../controllers/productController';
 import * as researchController from '../controllers/researchController';
+import * as researchJobController from '../controllers/researchJobController';
 import * as brandProfileController from '../controllers/brandProfileController';
 import * as promptTemplateController from '../controllers/promptTemplateController';
+import { proxyImage } from '../controllers/proxyImageController';
 
 const router = express.Router();
 
@@ -28,8 +30,20 @@ router.post('/products', productController.createProduct);
 router.put('/products/:id', productController.updateProduct);
 router.delete('/products/:id', productController.deleteProduct);
 
-// Research routes
+// Research routes (legacy, giữ nguyên cho tương thích ngược)
 router.post('/research/run', researchController.runTrendResearch);
+
+// Research job routes (Giai đoạn 3 - pipeline 5 stage chạy nền + SSE)
+router.post('/research/jobs', researchJobController.createResearchJob);
+router.get('/research/jobs', researchJobController.listResearchJobs);
+router.get('/research/jobs/:id', researchJobController.getResearchJob);
+router.post('/research/jobs/:id/hashtags', researchJobController.selectHashtags);
+router.post('/research/jobs/:id/retry', researchJobController.retryResearchJob);
+router.get('/research/jobs/:id/stream', researchJobController.streamResearchJob);
+
+// Proxy ảnh (chống hotlink-block từ TikTok CDN) - whitelist domain xem
+// proxyImageController.ts::ALLOWED_HOST_SUFFIXES.
+router.get('/proxy-image', proxyImage);
 
 // Brand profile routes
 router.get('/brand-profiles', brandProfileController.getBrandProfiles);

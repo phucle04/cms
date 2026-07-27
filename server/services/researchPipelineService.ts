@@ -231,24 +231,31 @@ export async function runStage1GenerateHashtags(job: IResearchJob, emit: EmitFn)
     );
   }
 
-  if (job.autoSelectTop3) {
-    const top3 =
-      job.selectedHashtags.length > 0
-        ? job.selectedHashtags
-        : [...hashtags].sort((a, b) => b.score - a.score).slice(0, 3).map((h) => h.tag);
-    job.selectedHashtags = top3;
-    await withDbRetry(() => job.save(), 'Stage1 save selectedHashtags');
-
+  const logAndEmitSelected = (tags: string[], reason: string) => {
     // discoveryLimit là số item MỖI HASHTAG (xem env.ts) - cảnh báo chi phí
     // TRƯỚC khi sang stage 2, đúng yêu cầu "chặn được nếu cần".
-    const estimatedDiscoveryItems = top3.length * APIFY_DISCOVERY_LIMIT;
+    const estimatedDiscoveryItems = tags.length * APIFY_DISCOVERY_LIMIT;
     const estimatedApifyCost = estimateApifyCost(estimatedDiscoveryItems, false) + estimateApifyCost(5, true);
     console.log(
-      `[Pipeline] Stage 1 xong - tự chọn top 3 hashtag: [${top3.join(', ')}]. ` +
+      `[Pipeline] Stage 1 xong - ${reason}: [${tags.join(', ')}]. ` +
         `Ước tính chi phí Apify cho Stage 2 (PASS 1 ~${estimatedDiscoveryItems} item + PASS 2 ~5 item tải video) ` +
         `≈ $${estimatedApifyCost} (ước tính thô).`
     );
-    emit('stage_complete', { jobId: job._id, stage: 'generating_hashtags', selectedHashtags: top3, estimatedApifyCost });
+    emit('stage_complete', { jobId: job._id, stage: 'generating_hashtags', selectedHashtags: tags, estimatedApifyCost });
+  };
+
+  if (job.selectedHashtags.length > 0) {
+    // Hashtag đã được chọn từ trước - do tự động chọn ở 1 lần chạy trước đó
+    // (resume), HOẶC do người dùng chọn thủ công qua
+    // POST /api/research/jobs/:id/hashtags trong khi job đang ở trạng thái
+    // awaiting_hashtag_selection. Cả 2 trường hợp đều phải đi tiếp sang stage
+    // 2 ngay, KHÔNG được quay lại dừng chờ chọn hashtag lần nữa.
+    logAndEmitSelected(job.selectedHashtags, 'hashtag đã chọn');
+  } else if (job.autoSelectTop3) {
+    const top3 = [...hashtags].sort((a, b) => b.score - a.score).slice(0, 3).map((h) => h.tag);
+    job.selectedHashtags = top3;
+    await withDbRetry(() => job.save(), 'Stage1 save selectedHashtags');
+    logAndEmitSelected(top3, 'tự chọn top 3 hashtag');
   } else {
     await setStatus(job, 'awaiting_hashtag_selection');
     console.log(`[Pipeline] Stage 1 xong - autoSelectTop3=false, DỪNG chờ người dùng chọn hashtag (jobId=${job._id}).`);
