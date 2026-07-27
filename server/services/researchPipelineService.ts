@@ -7,8 +7,10 @@ import TrendVideo from '../models/TrendVideo';
 import { GEMINI_MODEL, APIFY_DISCOVERY_LIMIT } from '../config/env';
 import { withGeminiRetry, estimateGeminiCost, type GeminiUsage, type PromptTemplateLike } from './geminiVideoService';
 import { TikTokService, estimateApifyCost, normalizeToTrendVideo } from './tiktokService';
-import { downloadVideo, type DownloadableVideo } from './videoDownloadService';
+import { downloadVideo, getVideoFilePath, cleanupVideo, type DownloadableVideo } from './videoDownloadService';
+import { analyzeVideo, analyzeFromTextOnly } from './geminiVideoService';
 import { HashtagSuggestionsSchema } from '../types/pipeline';
+import fs from 'fs/promises';
 
 /**
  * Orchestrator pipeline research: 5 stage tuần tự, cập nhật ResearchJob sau
@@ -336,4 +338,153 @@ export async function runStage3Downloading(job: IResearchJob, emit: EmitFn): Pro
 
   console.log(`[Pipeline] Stage 3 xong - phân bố tầng tải:`, tierCounts);
   emit('stage_complete', { jobId: job._id, stage: 'downloading', tierCounts });
+}
+
+// ============================================================
+// STAGE 4 - analyzing
+// ============================================================
+
+const MIN_VIDEOS_WITH_ANALYSIS = 2;
+
+/**
+ * Tải nội dung phụ đề (.vtt) về plain text - dùng làm transcript cho video
+ * text_only (không có file để Gemini tự nghe). Phòng thủ hoàn toàn: bất kỳ
+ * lỗi nào cũng trả undefined, KHÔNG throw, KHÔNG làm chết việc phân tích.
+ */
+async function fetchSubtitleText(
+  subtitleLinks: Array<{ language: string; downloadLink: string }> | undefined
+): Promise<string | undefined> {
+  if (!subtitleLinks || subtitleLinks.length === 0) return undefined;
+
+  const preferred = subtitleLinks.find((s) => s.language?.toLowerCase().includes('vi')) ?? subtitleLinks[0];
+
+  try {
+    const res = await fetch(preferred.downloadLink, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return undefined;
+
+    const raw = await res.text();
+    const text = raw
+      .split('\n')
+      .filter((line) => !line.startsWith('WEBVTT') && !/^\d+$/.test(line.trim()) && !line.includes('-->'))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return text || undefined;
+  } catch (error) {
+    console.warn('[Pipeline] fetchSubtitleText thất bại (không throw):', error instanceof Error ? error.message : error);
+    return undefined;
+  }
+}
+
+/**
+ * Từng video TUẦN TỰ: downloaded_* -> analyzeVideo (video thật, confidence
+ * high); text_only hoặc file đã mất trên đĩa (resume sau crash) ->
+ * analyzeFromTextOnly (confidence low). 1 video lỗi -> log, ĐI TIẾP, KHÔNG
+ * throw giữa vòng lặp - job CHỈ fail nếu < MIN_VIDEOS_WITH_ANALYSIS video có
+ * analysis dùng được (kiểm tra ở cuối). finally: LUÔN cleanupVideo() file
+ * tạm local, kể cả khi throw - deleteGeminiFile() đã được xử lý BÊN TRONG
+ * analyzeVideo() (finally riêng của nó), không gọi lại ở đây.
+ */
+export async function runStage4Analyzing(job: IResearchJob, emit: EmitFn): Promise<void> {
+  await setStatus(job, 'analyzing');
+  const jobId = String(job._id);
+
+  const videos = await TrendVideo.find({ jobId }).sort({ playCount: -1 });
+  if (videos.length === 0) {
+    throw new Error(`Không có TrendVideo nào cho job ${jobId}`);
+  }
+
+  await pushProgress(job, 'analyzing', 'Đọc PromptTemplate(video_analysis)...', 0, emit);
+  const template = await fetchPromptTemplate(job.userId.toString(), 'video_analysis');
+
+  let idx = 0;
+  let successCount = 0;
+
+  for (const video of videos) {
+    idx += 1;
+    const filePath = getVideoFilePath(jobId, video.videoId);
+    const hasDownloadedFile = video.downloadStatus === 'downloaded_apify' || video.downloadStatus === 'downloaded_ytdlp';
+
+    try {
+      const fileExists = hasDownloadedFile
+        ? await fs.stat(filePath).then(() => true).catch(() => false)
+        : false;
+
+      let analysisResult: Awaited<ReturnType<typeof analyzeVideo>>;
+
+      if (fileExists) {
+        analysisResult = await analyzeVideo({
+          filePath,
+          mimeType: 'video/mp4',
+          template,
+          context: {
+            caption: video.caption,
+            playCount: video.playCount,
+            diggCount: video.diggCount,
+          },
+        });
+      } else {
+        if (hasDownloadedFile) {
+          console.warn(
+            `[Pipeline] Stage 4: video ${video.videoId} có downloadStatus=${video.downloadStatus} nhưng file KHÔNG còn trên đĩa (${filePath}) - fallback text_only (có thể do resume sau crash)`
+          );
+        }
+
+        const subtitles = await fetchSubtitleText(video.subtitleLinks);
+        analysisResult = await analyzeFromTextOnly({
+          context: {
+            caption: video.caption,
+            hashtags: video.hashtags,
+            topComments: video.topComments,
+            subtitles,
+          },
+          template,
+        });
+      }
+
+      video.analysis = analysisResult.analysis;
+      video.analysisConfidence = analysisResult.analysis.analysisConfidence;
+      video.analyzedAt = new Date();
+      await video.save();
+
+      addGeminiUsage(job, analysisResult.usage);
+      await job.save();
+
+      successCount += 1;
+
+      await pushProgress(
+        job,
+        'analyzing',
+        `Video ${idx}/${videos.length} (${video.videoId}): xong (confidence=${video.analysisConfidence}, ` +
+          `${analysisResult.usage.inputTokens} in/${analysisResult.usage.outputTokens} out token)`,
+        Math.round((idx / videos.length) * 100),
+        emit
+      );
+    } catch (error) {
+      console.error(
+        `[Pipeline] Stage 4: video ${video.videoId} LỖI phân tích, bỏ qua, ĐI TIẾP:`,
+        error instanceof Error ? error.message : error
+      );
+      await pushProgress(
+        job,
+        'analyzing',
+        `Video ${idx}/${videos.length} (${video.videoId}): LỖI, bỏ qua`,
+        Math.round((idx / videos.length) * 100),
+        emit
+      );
+    } finally {
+      await cleanupVideo(filePath);
+    }
+  }
+
+  if (successCount < MIN_VIDEOS_WITH_ANALYSIS) {
+    throw new Error(
+      `Chỉ có ${successCount}/${videos.length} video phân tích thành công - cần tối thiểu ${MIN_VIDEOS_WITH_ANALYSIS} video ` +
+        'để sinh kịch bản đáng tin cậy. Job dừng lại, không sinh kịch bản từ quá ít dữ liệu.'
+    );
+  }
+
+  console.log(`[Pipeline] Stage 4 xong - ${successCount}/${videos.length} video phân tích thành công`);
+  emit('stage_complete', { jobId: job._id, stage: 'analyzing', successCount, total: videos.length });
 }
