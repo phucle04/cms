@@ -250,7 +250,12 @@ const GEMINI_PRICING_USD_PER_MILLION_TOKENS: Record<string, { input: number; out
   'gemini-2.5-flash': { input: 0.3, output: 2.5 },
 };
 
-function estimateGeminiCost(model: string, inputTokens: number, outputTokens: number): number {
+/**
+ * Export để researchPipelineService.ts dùng chung cho hashtag/script
+ * generation (text-only, không qua callGeminiStructured của file này) - một
+ * nguồn giá duy nhất, tránh lặp lại bảng giá ở 2 nơi.
+ */
+export function estimateGeminiCost(model: string, inputTokens: number, outputTokens: number): number {
   const pricing = GEMINI_PRICING_USD_PER_MILLION_TOKENS[model];
   const effectivePricing = pricing ?? GEMINI_PRICING_USD_PER_MILLION_TOKENS['gemini-3.6-flash'];
 
