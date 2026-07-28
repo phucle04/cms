@@ -9,7 +9,8 @@ export type ResearchJobStatus =
   | 'analyzing'
   | 'generating_scripts'
   | 'completed'
-  | 'failed';
+  | 'failed'
+  | 'cancelled';
 
 const RESEARCH_JOB_STATUSES: ResearchJobStatus[] = [
   'queued',
@@ -21,6 +22,7 @@ const RESEARCH_JOB_STATUSES: ResearchJobStatus[] = [
   'generating_scripts',
   'completed',
   'failed',
+  'cancelled',
 ];
 
 export interface IResearchJobSuggestedHashtag {
@@ -66,6 +68,13 @@ export interface IResearchJob extends Document {
   productId: Types.ObjectId;
   brandProfileId?: Types.ObjectId;
   status: ResearchJobStatus;
+  /**
+   * Cờ yêu cầu dừng (Giai đoạn 5, dừng job ở bất kỳ giai đoạn nào) - set qua
+   * POST /research/jobs/:id/cancel, pipeline đang chạy tự kiểm tra cờ này
+   * giữa các bước/vòng lặp (xem checkCancelled() trong
+   * researchPipelineService.ts) rồi dừng lại êm, KHÔNG throw như lỗi thật.
+   */
+  cancelRequested: boolean;
   autoSelectTop3: boolean;
   suggestedHashtags: IResearchJobSuggestedHashtag[];
   selectedHashtags: string[];
@@ -103,6 +112,7 @@ const researchJobSchema = new Schema<IResearchJob>(
     productId: { type: Schema.Types.ObjectId, ref: 'ProductBrief', required: true },
     brandProfileId: { type: Schema.Types.ObjectId, ref: 'BrandProfile' },
     status: { type: String, enum: RESEARCH_JOB_STATUSES, default: 'queued' },
+    cancelRequested: { type: Boolean, default: false },
     autoSelectTop3: { type: Boolean, default: true },
     suggestedHashtags: [
       {

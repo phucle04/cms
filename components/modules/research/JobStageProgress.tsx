@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, X, Loader2, Pause } from 'lucide-react';
+import { Check, X, Loader2, Pause, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress';
 import * as Types from '@/lib/types';
@@ -24,23 +24,38 @@ function stepIndexForStatus(status: Types.ResearchJobStatus): number {
 interface JobStageProgressProps {
   status: Types.ResearchJobStatus;
   errorStage?: string;
+  // Bước đang chạy dở lúc bị dừng (lấy từ progress entry cuối cùng) - chỉ có
+  // ý nghĩa khi status === 'cancelled'.
+  cancelledStage?: string;
   latestPercent?: number;
   latestMessage?: string;
 }
 
-export function JobStageProgress({ status, errorStage, latestPercent, latestMessage }: JobStageProgressProps) {
+export function JobStageProgress({
+  status,
+  errorStage,
+  cancelledStage,
+  latestPercent,
+  latestMessage,
+}: JobStageProgressProps) {
   const failed = status === 'failed';
+  const cancelled = status === 'cancelled';
   const paused = status === 'awaiting_hashtag_selection';
-  const currentIndex = failed ? STEPS.findIndex((s) => s.key === errorStage) : stepIndexForStatus(status);
+  const currentIndex = failed
+    ? STEPS.findIndex((s) => s.key === errorStage)
+    : cancelled
+      ? STEPS.findIndex((s) => s.key === cancelledStage)
+      : stepIndexForStatus(status);
 
   return (
     <div className="space-y-4">
       <div className="flex items-start">
         {STEPS.map((step, i) => {
-          const isDone = !failed && i < currentIndex;
+          const isDone = !failed && !cancelled && i < currentIndex;
           const isPausedHere = paused && i === currentIndex;
-          const isCurrent = !failed && !paused && i === currentIndex && status !== 'completed';
+          const isCurrent = !failed && !cancelled && !paused && i === currentIndex && status !== 'completed';
           const isFailed = failed && i === currentIndex;
+          const isCancelledHere = cancelled && i === currentIndex;
 
           return (
             <div key={step.key} className="flex items-start flex-1 last:flex-none">
@@ -52,15 +67,17 @@ export function JobStageProgress({ status, errorStage, latestPercent, latestMess
                     isCurrent && 'border-primary text-link',
                     isPausedHere && 'border-warning text-warning',
                     isFailed && 'bg-destructive border-destructive text-destructive-foreground',
-                    !isDone && !isCurrent && !isPausedHere && !isFailed &&
+                    isCancelledHere && 'bg-muted border-border-strong text-muted-foreground',
+                    !isDone && !isCurrent && !isPausedHere && !isFailed && !isCancelledHere &&
                       'border-border-strong text-muted-foreground'
                   )}
                 >
                   {isDone && <Check size={16} />}
                   {isFailed && <X size={16} />}
+                  {isCancelledHere && <Square size={14} />}
                   {isCurrent && <Loader2 size={16} className="animate-spin" />}
                   {isPausedHere && <Pause size={14} />}
-                  {!isDone && !isCurrent && !isPausedHere && !isFailed && (
+                  {!isDone && !isCurrent && !isPausedHere && !isFailed && !isCancelledHere && (
                     <span className="text-xs font-semibold">{i + 1}</span>
                   )}
                 </div>
@@ -86,7 +103,7 @@ export function JobStageProgress({ status, errorStage, latestPercent, latestMess
         })}
       </div>
 
-      {latestMessage && !failed && status !== 'completed' && !paused && (
+      {latestMessage && !failed && !cancelled && status !== 'completed' && !paused && (
         <div className="space-y-1.5">
           <Progress value={latestPercent ?? 0} />
           <p className="text-sm text-muted-foreground">{latestMessage}</p>

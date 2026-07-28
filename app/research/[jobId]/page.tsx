@@ -4,9 +4,10 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { ArrowLeft, AlertTriangle, Wifi, WifiOff } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Wifi, WifiOff, OctagonX, Info } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
+import { Modal } from '@/components/common/Modal';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/common/Tabs';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -29,6 +30,16 @@ const PRE_SCRIPT_STATUSES: Types.ResearchJobStatus[] = [
   'scraping',
   'downloading',
   'analyzing',
+];
+// Job còn "sống" (chưa tới trạng thái cuối) - có thể bấm dừng ở bất kỳ bước nào trong số này.
+const STOPPABLE_STATUSES: Types.ResearchJobStatus[] = [
+  'queued',
+  'generating_hashtags',
+  'awaiting_hashtag_selection',
+  'scraping',
+  'downloading',
+  'analyzing',
+  'generating_scripts',
 ];
 
 function productName(productId: Types.ResearchJob['productId']): string {
@@ -70,6 +81,8 @@ export default function ResearchJobPage() {
   const { job, trendVideos, scripts, loading, error, connectionMode, reload } = useResearchJobStream(jobId);
   const [submittingHashtags, setSubmittingHashtags] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const handleSelectHashtags = async (selected: string[]) => {
     setSubmittingHashtags(true);
@@ -94,6 +107,20 @@ export default function ResearchJobPage() {
       toast.error(e instanceof Error ? e.message : 'Thử lại thất bại');
     } finally {
       setRetrying(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    setShowCancelConfirm(false);
+    setCancelling(true);
+    try {
+      await API.ResearchJobAPI.cancel(jobId);
+      toast.success('Đã gửi yêu cầu dừng - job sẽ dừng trong giây lát');
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Không dừng được job');
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -126,6 +153,8 @@ export default function ResearchJobPage() {
   const videosLoading = trendVideos.length === 0 && job.status === 'scraping';
   const scriptsPending = scripts.length === 0 && PRE_SCRIPT_STATUSES.includes(job.status);
   const scriptsLoading = scripts.length === 0 && job.status === 'generating_scripts';
+  const canCancel = STOPPABLE_STATUSES.includes(job.status);
+  const stopping = canCancel && Boolean(job.cancelRequested);
 
   return (
     <div className="p-6 space-y-6">
@@ -148,9 +177,23 @@ export default function ResearchJobPage() {
             Chi phí ước tính: {formatCurrency(job.cost.totalEstimatedUsd)} · Tạo {formatRelativeTime(job.createdAt)}
           </p>
         </div>
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          {connectionMode === 'sse' ? <Wifi size={14} className="text-success" /> : <WifiOff size={14} className="text-warning" />}
-          {connectionMode === 'sse' ? 'Đang cập nhật real-time' : 'Mất kết nối real-time - đang cập nhật mỗi 3 giây'}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {connectionMode === 'sse' ? <Wifi size={14} className="text-success" /> : <WifiOff size={14} className="text-warning" />}
+            {connectionMode === 'sse' ? 'Đang cập nhật real-time' : 'Mất kết nối real-time - đang cập nhật mỗi 3 giây'}
+          </div>
+          {canCancel && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowCancelConfirm(true)}
+              isLoading={cancelling}
+              disabled={stopping}
+            >
+              <OctagonX size={14} className="mr-1.5" />
+              {stopping ? 'Đang dừng...' : 'Dừng job'}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -159,11 +202,28 @@ export default function ResearchJobPage() {
           <JobStageProgress
             status={job.status}
             errorStage={job.error?.stage}
+            cancelledStage={job.status === 'cancelled' ? latestProgress?.stage : undefined}
             latestPercent={latestProgress?.percent}
             latestMessage={latestProgress?.message}
           />
         </CardContent>
       </Card>
+
+      {job.status === 'cancelled' && (
+        <Card className="border-border-strong">
+          <CardContent className="pt-6 flex items-start gap-3">
+            <Info className="text-muted-foreground shrink-0 mt-0.5" size={20} />
+            <div>
+              <p className="font-semibold text-foreground">
+                Job đã dừng theo yêu cầu{latestProgress?.stage ? ` ở bước "${latestProgress.stage}"` : ''}
+              </p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Dữ liệu đã xử lý xong trước khi dừng (video/kịch bản, nếu có) vẫn được giữ lại bên dưới - không bị mất.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {job.status === 'failed' && (
         <Card className="border-destructive/50">
@@ -232,6 +292,28 @@ export default function ResearchJobPage() {
           )}
         </TabsContent>
       </Tabs>
+
+      <Modal
+        isOpen={showCancelConfirm}
+        onClose={() => setShowCancelConfirm(false)}
+        title="Dừng job nghiên cứu?"
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setShowCancelConfirm(false)}>
+              Huỷ
+            </Button>
+            <Button variant="destructive" onClick={handleCancel} isLoading={cancelling}>
+              Dừng job
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-muted-foreground">
+          Job sẽ dừng lại trong giây lát ở bước đang chạy. Dữ liệu đã xử lý xong (video/kịch bản, nếu có) vẫn được giữ
+          lại, không bị mất - nhưng phần đang chạy dở sẽ không hoàn tất.
+        </p>
+      </Modal>
     </div>
   );
 }

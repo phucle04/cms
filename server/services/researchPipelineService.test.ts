@@ -1,15 +1,18 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import ResearchJob from '../models/ResearchJob';
 import TrendVideo from '../models/TrendVideo';
 import PromptTemplate from '../models/PromptTemplate';
 import { TikTokService } from '../services/tiktokService';
 import {
+  runStage1GenerateHashtags,
   runStage2Scraping,
   runStage4Analyzing,
   addGeminiUsage,
   recomputeTotalCost,
   MIN_VIDEOS_WITH_ANALYSIS,
   stageIndexForStatus,
+  PipelineCancelledError,
   type EmitFn,
 } from './researchPipelineService';
 import { HashtagSuggestionsSchema, GeneratedScriptsSchema } from '../types/pipeline';
@@ -90,6 +93,13 @@ function fakePromptTemplateFindOneQuery(template: unknown) {
   return { sort: () => Promise.resolve(template) };
 }
 
+// checkCancelled() trong researchPipelineService.ts gọi ResearchJob.exists()
+// thật ở đầu mỗi Stage - mock trả về null (chưa bị yêu cầu dừng) cho MỌI
+// test không tự test tính năng dừng job, tránh lỗi "not connected" thật.
+function mockNotCancelled() {
+  return mock.method(ResearchJob, 'exists', async () => null);
+}
+
 // ============================================================
 // addGeminiUsage / recomputeTotalCost - cộng dồn chi phí đúng qua nhiều lần gọi
 // ============================================================
@@ -153,6 +163,7 @@ test('runStage2Scraping: resume MỨC 1 - đã có rawScrapedVideos thì KHÔNG 
   const fetchCommentsSpy = mock.method(TikTokService.prototype, 'fetchTopComments', async () => {
     throw new Error('KHÔNG được gọi fetchTopComments cho video đã tồn tại (resume MỨC 2)');
   });
+  const cancelSpy = mockNotCancelled();
 
   try {
     const job = makeFakeJob({ rawScrapedVideos: rawVideos as unknown as IResearchJob['rawScrapedVideos'] });
@@ -171,6 +182,7 @@ test('runStage2Scraping: resume MỨC 1 - đã có rawScrapedVideos thì KHÔNG 
     searchSpy.mock.restore();
     existsSpy.mock.restore();
     fetchCommentsSpy.mock.restore();
+    cancelSpy.mock.restore();
   }
 });
 
@@ -201,6 +213,7 @@ test('runStage4Analyzing: job FAIL khi < MIN_VIDEOS_WITH_ANALYSIS video phân t�
   const templateSpy = mock.method(PromptTemplate, 'findOne', () =>
     fakePromptTemplateFindOneQuery({ systemPrompt: 'sys', userPromptTemplate: 'tpl', aiModel: '', temperature: 0.5 })
   );
+  const cancelSpy = mockNotCancelled();
 
   let callIndex = 0;
   // Inject trực tiếp qua tham số deps của runStage4Analyzing (không mock
@@ -227,6 +240,7 @@ test('runStage4Analyzing: job FAIL khi < MIN_VIDEOS_WITH_ANALYSIS video phân t�
   } finally {
     findSpy.mock.restore();
     templateSpy.mock.restore();
+    cancelSpy.mock.restore();
   }
 });
 
@@ -237,6 +251,7 @@ test('runStage4Analyzing: KHÔNG fail khi 3/5 video là text_only lỗi nhưng �
   const templateSpy = mock.method(PromptTemplate, 'findOne', () =>
     fakePromptTemplateFindOneQuery({ systemPrompt: 'sys', userPromptTemplate: 'tpl', aiModel: '', temperature: 0.5 })
   );
+  const cancelSpy = mockNotCancelled();
 
   let callIndex = 0;
   const analyzeFromTextOnlyFn = (async () => {
@@ -258,6 +273,7 @@ test('runStage4Analyzing: KHÔNG fail khi 3/5 video là text_only lỗi nhưng �
   } finally {
     findSpy.mock.restore();
     templateSpy.mock.restore();
+    cancelSpy.mock.restore();
   }
 });
 
@@ -278,6 +294,7 @@ test('runStage2Scraping (G6#1): Apify trả về 0 video -> throw lỗi rõ ràn
     totalFetched: 0,
     apifyActualUsd: 0.02,
   }));
+  const cancelSpy = mockNotCancelled();
 
   try {
     const job = makeFakeJob({ selectedHashtags: ['#khongtontai'] });
@@ -285,6 +302,7 @@ test('runStage2Scraping (G6#1): Apify trả về 0 video -> throw lỗi rõ ràn
     assert.equal(searchSpy.mock.callCount(), 1);
   } finally {
     searchSpy.mock.restore();
+    cancelSpy.mock.restore();
   }
 });
 
@@ -300,6 +318,7 @@ test('runStage4Analyzing (G6#7): resume - video đã analyzedAt từ trước KH
   const templateSpy = mock.method(PromptTemplate, 'findOne', () =>
     fakePromptTemplateFindOneQuery({ systemPrompt: 'sys', userPromptTemplate: 'tpl', aiModel: '', temperature: 0.5 })
   );
+  const cancelSpy = mockNotCancelled();
 
   let analyzeFromTextOnlyCallCount = 0;
   const analyzeFromTextOnlyFn = (async () => {
@@ -323,6 +342,7 @@ test('runStage4Analyzing (G6#7): resume - video đã analyzedAt từ trước KH
   } finally {
     findSpy.mock.restore();
     templateSpy.mock.restore();
+    cancelSpy.mock.restore();
   }
 });
 
@@ -335,6 +355,71 @@ test('HashtagSuggestionsSchema (G6#4): Gemini trả JSON sai schema -> zod throw
   // JSON hợp lệ nhưng ít hơn 8 phần tử (schema yêu cầu .min(8).max(12))
   const tooFew = [{ tag: '#a', reason: 'r', score: 50 }];
   assert.throws(() => HashtagSuggestionsSchema.parse(tooFew));
+});
+
+// ============================================================
+// Dừng job ở bất kỳ giai đoạn nào (yêu cầu người dùng sau Giai đoạn 5) -
+// checkCancelled() đọc cancelRequested TRỰC TIẾP TỪ DB (ResearchJob.exists),
+// không tin job.cancelRequested trong bộ nhớ vì request cancel chạy ở 1
+// Express request KHÁC với request đang chạy pipeline nền.
+// ============================================================
+
+test('runStage1GenerateHashtags: cancelRequested=true -> throw PipelineCancelledError, KHÔNG gọi Gemini', async () => {
+  const cancelSpy = mock.method(ResearchJob, 'exists', async () => true);
+
+  try {
+    const job = makeFakeJob();
+    await assert.rejects(() => runStage1GenerateHashtags(job, noopEmit), (err: unknown) => {
+      assert.ok(err instanceof PipelineCancelledError);
+      return true;
+    });
+  } finally {
+    cancelSpy.mock.restore();
+  }
+});
+
+test('runStage2Scraping: cancelRequested=true giữa vòng lặp lưu video -> dừng, không lưu tiếp video còn lại', async () => {
+  const rawVideos = [1, 2, 3].map((i) => ({
+    id: `v${i}`,
+    webVideoUrl: `https://www.tiktok.com/@x/video/v${i}`,
+    text: `caption ${i}`,
+    playCount: i * 100,
+    hashtags: [],
+  }));
+
+  // Bản thân Stage 2 (đã có rawScrapedVideos, resume MỨC 1) không gọi lại
+  // Apify - cancelRequested chỉ trở thành true SAU KHI video đầu tiên đã lưu
+  // xong, mô phỏng người dùng bấm "Dừng" giữa lúc Stage 2 đang chạy.
+  let existsCallCount = 0;
+  const cancelSpy = mock.method(ResearchJob, 'exists', async () => {
+    existsCallCount += 1;
+    // Check #1 (đầu Stage) và #2 (video 1 trong loop): chưa cancel - video 1
+    // được xử lý xong. Check #3 (video 2): đã cancel - dừng trước khi lưu
+    // tiếp, mô phỏng người dùng bấm "Dừng" sau khi 1 video đã lưu xong.
+    return existsCallCount > 2;
+  });
+  const trendVideoExistsSpy = mock.method(TrendVideo, 'exists', async () => false);
+  let savedCount = 0;
+  const findOneAndUpdateSpy = mock.method(TrendVideo, 'findOneAndUpdate', async () => {
+    savedCount += 1;
+    return {};
+  });
+  const fetchCommentsSpy = mock.method(TikTokService.prototype, 'fetchTopComments', async () => []);
+
+  try {
+    const job = makeFakeJob({ rawScrapedVideos: rawVideos as unknown as IResearchJob['rawScrapedVideos'] });
+    await assert.rejects(() => runStage2Scraping(job, noopEmit), (err: unknown) => {
+      assert.ok(err instanceof PipelineCancelledError);
+      return true;
+    });
+    // Dừng lại giữa vòng lặp - đã lưu đúng 1/3 video trước khi bị dừng.
+    assert.equal(savedCount, 1);
+  } finally {
+    cancelSpy.mock.restore();
+    trendVideoExistsSpy.mock.restore();
+    findOneAndUpdateSpy.mock.restore();
+    fetchCommentsSpy.mock.restore();
+  }
 });
 
 test('GeneratedScriptsSchema (G6#4): Gemini trả thiếu/sai số phần tử -> zod throw rõ ràng', () => {

@@ -31,12 +31,40 @@ import fs from 'fs/promises';
  * ở Giai đoạn 2 - chúng chỉ trả dữ liệu, không tự lưu).
  */
 
-export type PipelineEvent = 'progress' | 'stage_complete' | 'error' | 'done';
+export type PipelineEvent = 'progress' | 'stage_complete' | 'error' | 'done' | 'cancelled';
 export type EmitFn = (event: PipelineEvent, payload: Record<string, unknown>) => void;
 
 export const defaultEmit: EmitFn = (event, payload) => {
   console.log(`[Pipeline] emit(${event}):`, JSON.stringify(payload));
 };
+
+/**
+ * Ném ra khi phát hiện job bị người dùng yêu cầu dừng (checkCancelled()) -
+ * KHÁC lỗi thật, orchestrator (runResearchPipeline) bắt riêng loại lỗi này để
+ * đặt status='cancelled' thay vì 'failed', không log console.error, không ghi
+ * job.error như 1 sự cố.
+ */
+export class PipelineCancelledError extends Error {
+  constructor(public stage: ResearchJobStatus) {
+    super(`Job bị dừng theo yêu cầu người dùng ở bước "${stage}"`);
+    this.name = 'PipelineCancelledError';
+  }
+}
+
+/**
+ * Kiểm tra cờ cancelRequested TRỰC TIẾP TỪ DB (không dùng job.cancelRequested
+ * trong bộ nhớ - job đang chạy có thể đã load từ lâu, request
+ * POST /research/jobs/:id/cancel chạy ở 1 request Express KHÁC set cờ này
+ * sau đó). Gọi ở đầu mỗi Stage VÀ giữa vòng lặp từng video (Stage 2/3/4) để
+ * "dừng ở bất kỳ giai đoạn nào" phản hồi trong vài giây, không phải đợi hết
+ * cả Stage đang chạy dở.
+ */
+async function checkCancelled(job: IResearchJob): Promise<void> {
+  const cancelled = await ResearchJob.exists({ _id: job._id, cancelRequested: true });
+  if (cancelled) {
+    throw new PipelineCancelledError(job.status);
+  }
+}
 
 // ============================================================
 // Gemini text-generation helper dùng chung cho Stage 1 + Stage 5 (không
@@ -175,6 +203,7 @@ const HASHTAG_RESPONSE_SCHEMA = {
 } as const;
 
 export async function runStage1GenerateHashtags(job: IResearchJob, emit: EmitFn): Promise<void> {
+  await checkCancelled(job);
   await setStatus(job, 'generating_hashtags');
 
   // Idempotent cho resumeResearchPipeline: nếu đã có suggestedHashtags từ lần
@@ -268,6 +297,7 @@ export async function runStage1GenerateHashtags(job: IResearchJob, emit: EmitFn)
 // ============================================================
 
 export async function runStage2Scraping(job: IResearchJob, emit: EmitFn): Promise<void> {
+  await checkCancelled(job);
   await setStatus(job, 'scraping');
   const jobId = String(job._id);
   const userId = job.userId.toString();
@@ -327,6 +357,7 @@ export async function runStage2Scraping(job: IResearchJob, emit: EmitFn): Promis
   let skippedCount = 0;
 
   for (const raw of rawVideos) {
+    await checkCancelled(job);
     const normalized = normalizeToTrendVideo(raw, jobId, userId);
 
     const alreadyExists = await TrendVideo.exists({ jobId, videoId: normalized.videoId });
@@ -382,6 +413,7 @@ export async function runStage2Scraping(job: IResearchJob, emit: EmitFn): Promis
  * dẹp là trách nhiệm của Stage 4 (finally: cleanupVideo), không phải ở đây.
  */
 export async function runStage3Downloading(job: IResearchJob, emit: EmitFn): Promise<void> {
+  await checkCancelled(job);
   await setStatus(job, 'downloading');
   const jobId = String(job._id);
 
@@ -396,6 +428,7 @@ export async function runStage3Downloading(job: IResearchJob, emit: EmitFn): Pro
   const tierCounts: Record<string, number> = {};
 
   for (const video of videos) {
+    await checkCancelled(job);
     idx += 1;
 
     // Idempotent cho resume: video này đã được thử tải ở lần chạy trước
@@ -506,6 +539,7 @@ export async function runStage4Analyzing(
   emit: EmitFn,
   deps: Stage4Deps = defaultStage4Deps
 ): Promise<void> {
+  await checkCancelled(job);
   await setStatus(job, 'analyzing');
   const jobId = String(job._id);
 
@@ -521,6 +555,7 @@ export async function runStage4Analyzing(
   let successCount = 0;
 
   for (const video of videos) {
+    await checkCancelled(job);
     idx += 1;
 
     // Idempotent cho resume: video này đã phân tích xong ở lần chạy trước
@@ -718,6 +753,7 @@ function buildTrendContext(videos: ITrendVideo[]): string {
  * nhau. Tạo Idea (status='draft') + Script (mỗi idea 1 script) tương ứng.
  */
 export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn): Promise<void> {
+  await checkCancelled(job);
   await setStatus(job, 'generating_scripts');
   const jobId = String(job._id);
 
@@ -910,6 +946,11 @@ export async function runResearchPipeline(jobId: string, emit: EmitFn = defaultE
     return;
   }
 
+  if (job.status === 'cancelled') {
+    console.log(`[Pipeline] Job ${jobId} đã bị dừng theo yêu cầu người dùng trước đó - không tự chạy lại.`);
+    return;
+  }
+
   // Job từng 'failed' - resume từ ĐÚNG stage đã lỗi (lưu trong error.stage),
   // KHÔNG phải làm lại từ đầu. Nếu vì lý do gì đó error.stage rỗng/lạ, an
   // toàn nhất là coi như status hiện tại (rơi về stage 1).
@@ -949,8 +990,27 @@ export async function runResearchPipeline(jobId: string, emit: EmitFn = defaultE
       await runStage5GenerateScripts(job, emit);
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     const stage = job.status;
+
+    // Dừng theo yêu cầu người dùng (KHÁC lỗi thật) - status='cancelled',
+    // không ghi job.error, không log console.error, KHÔNG throw lại (đây là
+    // luồng bình thường, không phải sự cố cần .catch() ở call site xử lý).
+    if (error instanceof PipelineCancelledError) {
+      job.status = 'cancelled';
+      await withDbRetry(() => job.save(), 'runResearchPipeline mark cancelled');
+
+      console.log(`[Pipeline] Job ${jobId} đã DỪNG theo yêu cầu người dùng ở stage "${stage}".`);
+      emit('cancelled', { jobId: job._id, stage });
+
+      const { deletedCount: cancelledDeletedCount } = await cleanupJobTempFiles(jobId);
+      if (cancelledDeletedCount > 0) {
+        console.log(`[Pipeline] Đã dọn ${cancelledDeletedCount} file tạm còn sót của job ${jobId} sau khi dừng.`);
+      }
+
+      return;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
 
     job.status = 'failed';
     job.error = { stage, message, at: new Date() };

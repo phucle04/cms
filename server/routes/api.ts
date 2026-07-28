@@ -50,6 +50,7 @@ router.get('/research/jobs', researchJobController.listResearchJobs);
 router.get('/research/jobs/:id', researchJobController.getResearchJob);
 router.post('/research/jobs/:id/hashtags', validateBody(selectHashtagsSchema), researchJobController.selectHashtags);
 router.post('/research/jobs/:id/retry', researchJobController.retryResearchJob);
+router.post('/research/jobs/:id/cancel', researchJobController.cancelResearchJob);
 router.get('/research/jobs/:id/stream', researchJobController.streamResearchJob);
 
 // Proxy ảnh (chống hotlink-block từ TikTok CDN) - whitelist domain xem

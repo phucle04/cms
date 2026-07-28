@@ -27,6 +27,7 @@ const RESEARCH_JOB_CONFIG: Record<Types.ResearchJobStatus, StatusConfigEntry> = 
   generating_scripts: { label: 'Đang sinh kịch bản', tone: 'info' },
   completed: { label: 'Hoàn tất', tone: 'success' },
   failed: { label: 'Thất bại', tone: 'danger' },
+  cancelled: { label: 'Đã dừng', tone: 'neutral' },
 };
 
 const PRODUCT_CONFIG: Record<Types.ProductBrief['status'], StatusConfigEntry> = {

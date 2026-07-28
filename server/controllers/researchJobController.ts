@@ -222,6 +222,51 @@ export const retryResearchJob = asyncHandler(async (req: AuthRequest, res: Respo
   });
 });
 
+// Trạng thái đã kết thúc - không còn gì để dừng.
+const TERMINAL_JOB_STATUSES: ResearchJobStatus[] = ['completed', 'failed', 'cancelled'];
+
+// Trạng thái "tạm dừng chờ" - KHÔNG có pipeline nào đang chạy nền tại thời
+// điểm này (queued chỉ tồn tại trong khoảnh khắc trước khi
+// runPipelineInBackground được gọi; awaiting_hashtag_selection dừng hẳn chờ
+// người dùng chọn hashtag) - set cancelRequested=true sẽ KHÔNG có gì bắt được
+// cờ này cho tới khi người dùng vô tình kích hoạt lại (vd chọn hashtag), lúc
+// đó pipeline sẽ tự huỷ ngay ở Stage 1 nhưng UI sẽ hiện nhầm thông báo
+// "đang chạy" trong lúc đó. Để UX rõ ràng ngay lập tức, 2 trạng thái này
+// được set status='cancelled' NGAY tại đây thay vì chỉ set cờ chờ.
+const PAUSED_NO_ACTIVE_PIPELINE_STATUSES: ResearchJobStatus[] = ['queued', 'awaiting_hashtag_selection'];
+
+export const cancelResearchJob = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const job = await ResearchJob.findOne({ _id: req.params.id, userId: req.userId });
+  if (!job) {
+    throw new ApiError(404, 'Không tìm thấy research job');
+  }
+  if (TERMINAL_JOB_STATUSES.includes(job.status)) {
+    throw new ApiError(400, `Job đang ở trạng thái "${job.status}" - không thể dừng`);
+  }
+
+  job.cancelRequested = true;
+
+  if (PAUSED_NO_ACTIVE_PIPELINE_STATUSES.includes(job.status)) {
+    // Không có pipeline nào đang chạy để tự bắt cờ - dừng ngay tại đây.
+    job.status = 'cancelled';
+    await job.save();
+    res.json({ success: true, data: { jobId: job.id }, message: 'Đã dừng job' });
+    return;
+  }
+
+  // Pipeline đang chạy nền - chỉ set cờ, pipeline tự kiểm tra và dừng êm
+  // trong giây lát (xem checkCancelled() trong researchPipelineService.ts).
+  // KHÔNG set status='cancelled' ở đây để tránh đụng độ với pipeline đang tự
+  // ghi status của chính nó cùng lúc.
+  await job.save();
+
+  res.json({
+    success: true,
+    data: { jobId: job.id },
+    message: 'Đã gửi yêu cầu dừng - job sẽ dừng trong giây lát',
+  });
+});
+
 export const streamResearchJob = asyncHandler(async (req: AuthRequest, res: Response) => {
   const job = await ResearchJob.findOne({ _id: req.params.id, userId: req.userId });
   if (!job) {
@@ -248,6 +293,11 @@ export const streamResearchJob = asyncHandler(async (req: AuthRequest, res: Resp
   }
   if (job.status === 'failed') {
     send('error', { jobId: job.id, stage: job.error?.stage, message: job.error?.message });
+    res.end();
+    return;
+  }
+  if (job.status === 'cancelled') {
+    send('cancelled', { jobId: job.id });
     res.end();
     return;
   }

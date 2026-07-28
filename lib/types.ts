@@ -54,7 +54,8 @@ export type ResearchJobStatus =
   | 'analyzing'
   | 'generating_scripts'
   | 'completed'
-  | 'failed';
+  | 'failed'
+  | 'cancelled';
 
 export interface ResearchJobSuggestedHashtag {
   tag: string;
@@ -91,6 +92,9 @@ export interface ResearchJob {
   productId: string | ProductBrief;
   brandProfileId?: string | BrandProfile;
   status: ResearchJobStatus;
+  // true = đã gửi yêu cầu dừng nhưng pipeline (đang chạy nền) chưa kịp dừng
+  // hẳn - status vẫn là stage đang chạy dở cho tới khi pipeline tự phát hiện.
+  cancelRequested?: boolean;
   autoSelectTop3: boolean;
   suggestedHashtags: ResearchJobSuggestedHashtag[];
   selectedHashtags: string[];

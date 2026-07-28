@@ -16,7 +16,7 @@ interface UseResearchJobStreamResult {
 }
 
 function isTerminalStatus(status?: Types.ResearchJobStatus): boolean {
-  return status === 'completed' || status === 'failed';
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
 /**
@@ -101,6 +101,10 @@ export function useResearchJobStream(jobId: string): UseResearchJobStreamResult 
     es.addEventListener('progress', refreshAfterEvent);
     es.addEventListener('stage_complete', refreshAfterEvent);
     es.addEventListener('done', () => {
+      refreshAfterEvent();
+      es?.close();
+    });
+    es.addEventListener('cancelled', () => {
       refreshAfterEvent();
       es?.close();
     });

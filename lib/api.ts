@@ -185,6 +185,10 @@ export const ResearchJobAPI = {
     return apiFetch(`/research/jobs/${id}/retry`, { method: 'POST' });
   },
 
+  async cancel(id: string): Promise<{ jobId: string }> {
+    return apiFetch(`/research/jobs/${id}/cancel`, { method: 'POST' });
+  },
+
   streamUrl(id: string): string {
     return `${API_BASE}/research/jobs/${id}/stream`;
   },
