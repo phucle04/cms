@@ -85,25 +85,25 @@ export function ResearchScriptCard({ script, index }: ResearchScriptCardProps) {
       <CardContent className="space-y-4">
         {script.targetPainPoint && (
           <div>
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Đánh vào nỗi đau</p>
-            <p className="text-sm text-gray-600 dark:text-gray-400">{script.targetPainPoint}</p>
+            <p className="text-sm font-medium text-foreground">Đánh vào nỗi đau</p>
+            <p className="text-sm text-muted-foreground">{script.targetPainPoint}</p>
           </div>
         )}
 
         {hook && (
           <div>
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Hook (câu mở đầu)</p>
-            <p className="text-sm text-gray-600 dark:text-gray-400">{hook}</p>
+            <p className="text-sm font-medium text-foreground">Hook (câu mở đầu)</p>
+            <p className="text-sm text-muted-foreground">{hook}</p>
           </div>
         )}
 
         {script.body && script.body.length > 0 && (
           <div>
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Diễn biến theo thời gian</p>
+            <p className="text-sm font-medium text-foreground mb-2">Diễn biến theo thời gian</p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm border-collapse">
                 <thead>
-                  <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
+                  <tr className="text-left text-muted-foreground border-b border-border">
                     <th className="py-1.5 pr-3 font-medium whitespace-nowrap">Thời gian</th>
                     <th className="py-1.5 pr-3 font-medium">Lời thoại</th>
                     <th className="py-1.5 pr-3 font-medium">Hình ảnh</th>
@@ -112,13 +112,13 @@ export function ResearchScriptCard({ script, index }: ResearchScriptCardProps) {
                 </thead>
                 <tbody>
                   {script.body.map((seg, i) => (
-                    <tr key={i} className="border-b border-gray-100 dark:border-gray-900 align-top">
-                      <td className="py-2 pr-3 whitespace-nowrap font-mono text-xs text-gray-500 dark:text-gray-500">
+                    <tr key={i} className="border-b border-border/60 align-top">
+                      <td className="py-2 pr-3 whitespace-nowrap font-mono text-xs text-muted-foreground">
                         {seg.tStart}s-{seg.tEnd}s
                       </td>
-                      <td className="py-2 pr-3 text-gray-800 dark:text-gray-200">{seg.voiceover}</td>
-                      <td className="py-2 pr-3 text-gray-600 dark:text-gray-400">{seg.visual}</td>
-                      <td className="py-2 text-gray-600 dark:text-gray-400">{seg.textOnScreen || '—'}</td>
+                      <td className="py-2 pr-3 text-foreground">{seg.voiceover}</td>
+                      <td className="py-2 pr-3 text-muted-foreground">{seg.visual}</td>
+                      <td className="py-2 text-muted-foreground">{seg.textOnScreen || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -128,24 +128,24 @@ export function ResearchScriptCard({ script, index }: ResearchScriptCardProps) {
         )}
 
         <div>
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">CTA</p>
-          <p className="text-sm text-gray-600 dark:text-gray-400">{script.callToAction}</p>
+          <p className="text-sm font-medium text-foreground">CTA</p>
+          <p className="text-sm text-muted-foreground">{script.callToAction}</p>
         </div>
 
         {script.caption && (
           <div>
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Caption đăng bài</p>
-            <p className="text-sm text-gray-600 dark:text-gray-400">{script.caption}</p>
+            <p className="text-sm font-medium text-foreground">Caption đăng bài</p>
+            <p className="text-sm text-muted-foreground">{script.caption}</p>
             {script.hashtags && script.hashtags.length > 0 && (
-              <p className="text-sm text-blue-600 dark:text-blue-400 mt-1">{script.hashtags.join(' ')}</p>
+              <p className="text-sm text-link mt-1">{script.hashtags.join(' ')}</p>
             )}
           </div>
         )}
 
         {script.shotList && script.shotList.length > 0 && (
           <div>
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Danh sách cảnh quay</p>
-            <ul className="list-disc list-inside text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-sm font-medium text-foreground">Danh sách cảnh quay</p>
+            <ul className="list-disc list-inside text-sm text-muted-foreground">
               {script.shotList.map((s, i) => (
                 <li key={i}>{s}</li>
               ))}
@@ -154,7 +154,7 @@ export function ResearchScriptCard({ script, index }: ResearchScriptCardProps) {
         )}
 
         {script.learnedFrom && script.learnedFrom.length > 0 && (
-          <p className="text-xs text-gray-500 dark:text-gray-500">
+          <p className="text-xs text-muted-foreground">
             Học pattern từ: {script.learnedFrom.map((c) => (c.startsWith('@') ? c : `@${c}`)).join(', ')}
           </p>
         )}

@@ -6,10 +6,10 @@ type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
 
 const TONE_CLASSES: Record<Tone, string> = {
   neutral: 'bg-muted text-muted-foreground',
-  info: 'bg-info/15 text-info',
-  success: 'bg-success/15 text-success',
-  warning: 'bg-warning/20 text-warning',
-  danger: 'bg-destructive/15 text-destructive',
+  info: 'bg-info-muted text-info-muted-foreground',
+  success: 'bg-success-muted text-success-muted-foreground',
+  warning: 'bg-warning-muted text-warning-muted-foreground',
+  danger: 'bg-destructive-muted text-destructive-muted-foreground',
 };
 
 interface StatusConfigEntry {
@@ -32,6 +32,12 @@ const RESEARCH_JOB_CONFIG: Record<Types.ResearchJobStatus, StatusConfigEntry> = 
 const PRODUCT_CONFIG: Record<Types.ProductBrief['status'], StatusConfigEntry> = {
   active: { label: 'Đang hoạt động', tone: 'success' },
   archived: { label: 'Đã lưu trữ', tone: 'neutral' },
+};
+
+const PRODUCT_AGE_CONFIG: Record<NonNullable<Types.ProductBrief['ageCategory']>, StatusConfigEntry> = {
+  under_24m: { label: 'Dưới 24 tháng (cần duyệt tay)', tone: 'warning' },
+  '24m_plus': { label: 'Từ 24 tháng trở lên', tone: 'success' },
+  not_applicable: { label: 'Không áp dụng', tone: 'neutral' },
 };
 
 const IDEA_STATUS_CONFIG: Record<Types.Idea['status'], StatusConfigEntry> = {
@@ -65,6 +71,7 @@ const TREND_VIDEO_DOWNLOAD_CONFIG: Record<Types.TrendVideoDownloadStatus, Status
 const CONFIG_BY_DOMAIN = {
   researchJob: RESEARCH_JOB_CONFIG,
   product: PRODUCT_CONFIG,
+  productAge: PRODUCT_AGE_CONFIG,
   ideaStatus: IDEA_STATUS_CONFIG,
   ideaPriority: IDEA_PRIORITY_CONFIG,
   script: SCRIPT_CONFIG,

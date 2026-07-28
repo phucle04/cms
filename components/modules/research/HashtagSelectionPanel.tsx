@@ -39,7 +39,7 @@ export function HashtagSelectionPanel({ suggestedHashtags, onSubmit, submitting 
         {sorted.map((h) => (
           <label
             key={h.tag}
-            className="flex items-start gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-900 cursor-pointer transition-colors"
+            className="flex items-start gap-3 p-3 rounded-lg border border-border hover:bg-accent/50 cursor-pointer transition-colors"
           >
             <Checkbox
               checked={selected.has(h.tag)}
@@ -48,12 +48,12 @@ export function HashtagSelectionPanel({ suggestedHashtags, onSubmit, submitting 
             />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium text-gray-900 dark:text-white">{h.tag}</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 font-semibold whitespace-nowrap">
+                <span className="font-medium text-foreground">{h.tag}</span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-info-muted/30 text-info-muted-foreground font-semibold whitespace-nowrap">
                   {h.score} điểm
                 </span>
               </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{h.reason}</p>
+              <p className="text-sm text-muted-foreground mt-1">{h.reason}</p>
             </div>
           </label>
         ))}

@@ -57,7 +57,6 @@ export default function DashboardPage() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -88,16 +87,16 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {STEPS.map((step, i) => (
               <Link key={step.href} href={step.href} className="block">
-                <div className="h-full p-4 rounded-lg border border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900/50 transition-colors">
-                  <div className="flex items-center gap-2 text-gray-400 dark:text-gray-600 text-xs font-semibold mb-2">
+                <div className="h-full p-4 rounded-lg border border-border hover:border-border-strong hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs font-semibold mb-2">
                     <span>BƯỚC {i + 1}</span>
                   </div>
-                  <div className="flex items-center gap-2 text-gray-900 dark:text-white font-medium">
+                  <div className="flex items-center gap-2 text-foreground font-medium">
                     <step.icon size={18} />
                     {step.label}
                   </div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{step.desc}</p>
-                  <ArrowRight size={14} className="mt-2 text-gray-400 dark:text-gray-600" />
+                  <p className="text-sm text-muted-foreground mt-1">{step.desc}</p>
+                  <ArrowRight size={14} className="mt-2 text-muted-foreground" />
                 </div>
               </Link>
             ))}
@@ -114,7 +113,7 @@ export default function DashboardPage() {
             </CardTitle>
             <CardDescription>5 job nghiên cứu TikTok mới nhất</CardDescription>
           </div>
-          <Link href="/research" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">
+          <Link href="/research" className="text-sm text-link hover:underline">
             Xem tất cả
           </Link>
         </CardHeader>
@@ -122,7 +121,7 @@ export default function DashboardPage() {
           {loading ? (
             <div className="space-y-2">
               {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-14 w-full rounded-lg bg-gray-100 dark:bg-gray-900 animate-pulse" />
+                <div key={i} className="h-14 w-full rounded-lg bg-muted animate-pulse" />
               ))}
             </div>
           ) : recentJobs.length === 0 ? (
@@ -131,7 +130,7 @@ export default function DashboardPage() {
               description='Vào trang Sản phẩm và bấm "Nghiên cứu TikTok" để bắt đầu.'
               action={
                 <Link href="/products">
-                  <span className="text-sm text-primary hover:underline">Đi tới trang Sản phẩm</span>
+                  <span className="text-sm text-link hover:underline">Đi tới trang Sản phẩm</span>
                 </Link>
               }
             />
@@ -139,10 +138,10 @@ export default function DashboardPage() {
             <div className="space-y-2">
               {recentJobs.map((job) => (
                 <Link key={job.id} href={`/research/${job.id}`}>
-                  <div className="flex items-center justify-between gap-4 p-3 rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-900/50 transition-colors flex-wrap">
+                  <div className="flex items-center justify-between gap-4 p-3 rounded-lg border border-border hover:bg-accent/50 transition-colors flex-wrap">
                     <div>
-                      <p className="font-medium text-gray-900 dark:text-white">{productName(job.productId)}</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5" title={formatDateTime(job.createdAt)}>
+                      <p className="font-medium text-foreground">{productName(job.productId)}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5" title={formatDateTime(job.createdAt)}>
                         {formatRelativeTime(job.createdAt)}
                       </p>
                     </div>

@@ -14,6 +14,7 @@ import { StatusBadge } from '@/components/common/StatusBadge';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { ProductBriefForm } from '@/components/modules/ideation/ProductBriefForm';
+import { ExpandableText } from '@/components/common/ExpandableText';
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<Types.ProductBrief[]>([]);
@@ -23,10 +24,6 @@ export default function ProductsPage() {
   const [editingProduct, setEditingProduct] = useState<Types.ProductBrief | undefined>();
   const [deleteTarget, setDeleteTarget] = useState<Types.ProductBrief | null>(null);
   const [deleting, setDeleting] = useState(false);
-
-  useEffect(() => {
-    loadData();
-  }, []);
 
   const loadData = async () => {
     setLoading(true);
@@ -40,6 +37,10 @@ export default function ProductsPage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadData();
+  }, []);
 
   const handleSaveProduct = async (data: Omit<Types.ProductBrief, 'id'>) => {
     try {
@@ -90,7 +91,7 @@ export default function ProductsPage() {
       {loading ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-40 w-full rounded-lg bg-gray-100 dark:bg-gray-900 animate-pulse" />
+            <div key={i} className="h-40 w-full rounded-lg bg-muted animate-pulse" />
           ))}
         </div>
       ) : error ? (
@@ -129,8 +130,8 @@ export default function ProductsPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div>
-                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">USP</p>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">{product.usp}</p>
+                  <p className="text-sm font-medium text-foreground">USP</p>
+                  <ExpandableText text={product.usp} className="text-sm text-muted-foreground" />
                 </div>
                 <div className="flex gap-2 flex-wrap">
                   <Button
@@ -188,7 +189,7 @@ export default function ProductsPage() {
           </>
         }
       >
-        <p className="text-sm text-gray-600 dark:text-gray-400">
+        <p className="text-sm text-muted-foreground">
           Hành động này không thể hoàn tác. Sản phẩm &quot;{deleteTarget?.name}&quot; sẽ bị xoá vĩnh viễn.
         </p>
       </Modal>

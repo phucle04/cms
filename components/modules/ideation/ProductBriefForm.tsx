@@ -24,6 +24,9 @@ const productBriefSchema = z.object({
   shootingTips: z.string().optional(),
   mediaUrl: z.string().optional(),
   status: z.enum(['active', 'archived']),
+  ageCategory: z.enum(['under_24m', '24m_plus', 'not_applicable'], {
+    message: 'Vui lòng chọn độ tuổi phù hợp',
+  }),
 });
 
 type ProductBriefFormData = z.infer<typeof productBriefSchema>;
@@ -60,8 +63,10 @@ export function ProductBriefForm({
       shootingTips: initialData.shootingTips,
       mediaUrl: initialData.mediaUrl,
       status: initialData.status,
+      ageCategory: initialData.ageCategory ?? 'not_applicable',
     } : {
       status: 'active',
+      ageCategory: 'not_applicable',
     },
   });
 
@@ -170,15 +175,28 @@ export function ProductBriefForm({
           {...register('mediaUrl')}
         />
 
-        <FormSelect
-          label="Trạng thái"
-          options={[
-            { value: 'active', label: 'Đang hoạt động' },
-            { value: 'archived', label: 'Đã lưu trữ' },
-          ]}
-          {...register('status')}
-          error={errors.status}
-        />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <FormSelect
+            label="Trạng thái"
+            options={[
+              { value: 'active', label: 'Đang hoạt động' },
+              { value: 'archived', label: 'Đã lưu trữ' },
+            ]}
+            {...register('status')}
+            error={errors.status}
+          />
+          <FormSelect
+            label="Độ tuổi phù hợp"
+            options={[
+              { value: 'not_applicable', label: 'Không áp dụng (sản phẩm phi thực phẩm/không phải sữa)' },
+              { value: 'under_24m', label: 'Dưới 24 tháng tuổi' },
+              { value: '24m_plus', label: 'Từ 24 tháng tuổi trở lên' },
+            ]}
+            {...register('ageCategory')}
+            error={errors.ageCategory}
+            helperText="Sản phẩm dưới 24 tháng tuổi sẽ bị chặn tạo research job tự động (Nghị định 100/2014/NĐ-CP)"
+          />
+        </div>
       </form>
     </Modal>
   );

@@ -55,10 +55,6 @@ export default function IdeationPage() {
   const [deleteTarget, setDeleteTarget] = useState<Types.Idea | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
   const loadData = async () => {
     setLoading(true);
     setError(null);
@@ -75,6 +71,10 @@ export default function IdeationPage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadData();
+  }, []);
 
   const filteredIdeas = useMemo(() => {
     return ideas.filter((idea) => {
@@ -215,7 +215,7 @@ export default function IdeationPage() {
       {selectedIds.size > 0 && (
         <Card>
           <CardContent className="py-3 flex items-center gap-3 flex-wrap">
-            <span className="text-sm text-gray-700 dark:text-gray-300">Đã chọn {selectedIds.size} ý tưởng</span>
+            <span className="text-sm text-foreground">Đã chọn {selectedIds.size} ý tưởng</span>
             <select
               value={bulkStatus}
               onChange={(e) => setBulkStatus(e.target.value as Types.Idea['status'])}
@@ -238,7 +238,7 @@ export default function IdeationPage() {
       {loading ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-32 w-full rounded-lg bg-gray-100 dark:bg-gray-900 animate-pulse" />
+            <div key={i} className="h-32 w-full rounded-lg bg-muted animate-pulse" />
           ))}
         </div>
       ) : error ? (
@@ -282,7 +282,7 @@ export default function IdeationPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
-                <p className="text-sm text-gray-600 dark:text-gray-400">{idea.description}</p>
+                <p className="text-sm text-muted-foreground">{idea.description}</p>
                 <div className="flex gap-2 flex-wrap">
                   <Button variant="outline" size="sm" onClick={() => handleViewDetail(idea.id)}>
                     <Eye size={16} className="mr-1" />
@@ -342,11 +342,11 @@ export default function IdeationPage() {
           {generatingIdeas ? (
             <div className="text-center py-8">
               <Spinner size="lg" />
-              <p className="mt-4 text-gray-600 dark:text-gray-400">Đang sinh ý tưởng bằng AI...</p>
+              <p className="mt-4 text-muted-foreground">Đang sinh ý tưởng bằng AI...</p>
             </div>
           ) : (
             <>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
+              <p className="text-sm text-muted-foreground">
                 Chọn một sản phẩm để sinh 5 ý tưởng nội dung bằng AI
               </p>
               <select
@@ -377,25 +377,25 @@ export default function IdeationPage() {
         ) : viewingIdea ? (
           <div className="space-y-4">
             <div>
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Tiêu đề</p>
-              <p className="text-sm text-gray-600 dark:text-gray-400">{viewingIdea.title}</p>
+              <p className="text-sm font-medium text-foreground">Tiêu đề</p>
+              <p className="text-sm text-muted-foreground">{viewingIdea.title}</p>
             </div>
             <div>
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Mô tả</p>
-              <p className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{viewingIdea.description}</p>
+              <p className="text-sm font-medium text-foreground">Mô tả</p>
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap">{viewingIdea.description}</p>
             </div>
             <div className="flex gap-4 flex-wrap">
               <div>
-                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Nguồn</p>
-                <p className="text-sm text-gray-600 dark:text-gray-400">{isFromPipeline(viewingIdea) ? 'Từ nghiên cứu TikTok' : 'Tự tạo'}</p>
+                <p className="text-sm font-medium text-foreground">Nguồn</p>
+                <p className="text-sm text-muted-foreground">{isFromPipeline(viewingIdea) ? 'Từ nghiên cứu TikTok' : 'Tự tạo'}</p>
               </div>
               <div>
-                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Ưu tiên</p>
-                <p className="text-sm text-gray-600 dark:text-gray-400">{PRIORITY_LABEL[viewingIdea.priority]}</p>
+                <p className="text-sm font-medium text-foreground">Ưu tiên</p>
+                <p className="text-sm text-muted-foreground">{PRIORITY_LABEL[viewingIdea.priority]}</p>
               </div>
               <div>
-                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Trạng thái</p>
-                <p className="text-sm text-gray-600 dark:text-gray-400">{STATUS_LABEL[viewingIdea.status]}</p>
+                <p className="text-sm font-medium text-foreground">Trạng thái</p>
+                <p className="text-sm text-muted-foreground">{STATUS_LABEL[viewingIdea.status]}</p>
               </div>
             </div>
           </div>
@@ -418,7 +418,7 @@ export default function IdeationPage() {
           </>
         }
       >
-        <p className="text-sm text-gray-600 dark:text-gray-400">
+        <p className="text-sm text-muted-foreground">
           Hành động này không thể hoàn tác. Ý tưởng &quot;{deleteTarget?.title}&quot; sẽ bị xoá vĩnh viễn.
         </p>
       </Modal>

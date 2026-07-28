@@ -4,12 +4,13 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Copy, Trash2 } from 'lucide-react';
+import { ArrowLeft, Copy, Trash2, ShieldAlert } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { ErrorState } from '@/components/common/ErrorState';
+import { ComplianceHighlight } from '@/components/common/ComplianceHighlight';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import * as API from '@/lib/api';
@@ -108,7 +109,7 @@ export default function ScriptDetailPage() {
     <div className="p-6 space-y-6 max-w-3xl">
       <Link
         href="/scripts"
-        className="inline-flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft size={14} /> Danh sách kịch bản
       </Link>
@@ -126,27 +127,46 @@ export default function ScriptDetailPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {script.complianceFlags && script.complianceFlags.length > 0 && (
+            <div className="rounded-md border border-destructive bg-destructive-muted p-3 flex items-start gap-2.5">
+              <ShieldAlert size={16} className="text-destructive-muted-foreground shrink-0 mt-0.5" />
+              <div className="text-sm text-destructive-muted-foreground">
+                <p className="font-medium">
+                  Bộ quét tuân thủ phát hiện {script.complianceFlags.length} cụm từ cần xem lại
+                </p>
+                <p className="mt-0.5">
+                  Đây là lớp lọc sơ bộ theo từ khoá, không thay thế việc đọc lại toàn bộ kịch bản trước khi đăng.
+                  Các cụm bị bôi đỏ bên dưới: {[...new Set(script.complianceFlags.map((f) => f.phrase))].join(', ')}
+                </p>
+              </div>
+            </div>
+          )}
+
           {script.targetPainPoint && (
             <div>
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Đánh vào nỗi đau</p>
-              <p className="text-sm text-gray-600 dark:text-gray-400">{script.targetPainPoint}</p>
+              <p className="text-sm font-medium text-foreground">Đánh vào nỗi đau</p>
+              <ComplianceHighlight
+                text={script.targetPainPoint}
+                flags={script.complianceFlags}
+                className="text-sm text-muted-foreground"
+              />
             </div>
           )}
 
           {hook && (
             <div>
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Hook (câu mở đầu)</p>
-              <p className="text-sm text-gray-600 dark:text-gray-400">{hook}</p>
+              <p className="text-sm font-medium text-foreground">Hook (câu mở đầu)</p>
+              <ComplianceHighlight text={hook} flags={script.complianceFlags} className="text-sm text-muted-foreground" />
             </div>
           )}
 
           {script.body && script.body.length > 0 && (
             <div>
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Diễn biến theo thời gian</p>
+              <p className="text-sm font-medium text-foreground mb-2">Diễn biến theo thời gian</p>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm border-collapse">
                   <thead>
-                    <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
+                    <tr className="text-left text-muted-foreground border-b border-border">
                       <th className="py-1.5 pr-3 font-medium whitespace-nowrap">Thời gian</th>
                       <th className="py-1.5 pr-3 font-medium">Lời thoại</th>
                       <th className="py-1.5 pr-3 font-medium">Hình ảnh</th>
@@ -155,13 +175,15 @@ export default function ScriptDetailPage() {
                   </thead>
                   <tbody>
                     {script.body.map((seg, i) => (
-                      <tr key={i} className="border-b border-gray-100 dark:border-gray-900 align-top">
-                        <td className="py-2 pr-3 whitespace-nowrap font-mono text-xs text-gray-500 dark:text-gray-500">
+                      <tr key={i} className="border-b border-border/60 align-top">
+                        <td className="py-2 pr-3 whitespace-nowrap font-mono text-xs text-muted-foreground">
                           {seg.tStart}s-{seg.tEnd}s
                         </td>
-                        <td className="py-2 pr-3 text-gray-800 dark:text-gray-200">{seg.voiceover}</td>
-                        <td className="py-2 pr-3 text-gray-600 dark:text-gray-400">{seg.visual}</td>
-                        <td className="py-2 text-gray-600 dark:text-gray-400">{seg.textOnScreen || '—'}</td>
+                        <td className="py-2 pr-3 text-foreground">
+                          <ComplianceHighlight text={seg.voiceover} flags={script.complianceFlags} />
+                        </td>
+                        <td className="py-2 pr-3 text-muted-foreground">{seg.visual}</td>
+                        <td className="py-2 text-muted-foreground">{seg.textOnScreen || '—'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -171,24 +193,32 @@ export default function ScriptDetailPage() {
           )}
 
           <div>
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">CTA</p>
-            <p className="text-sm text-gray-600 dark:text-gray-400">{script.callToAction}</p>
+            <p className="text-sm font-medium text-foreground">CTA</p>
+            <ComplianceHighlight
+              text={script.callToAction}
+              flags={script.complianceFlags}
+              className="text-sm text-muted-foreground"
+            />
           </div>
 
           {script.caption && (
             <div>
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Caption đăng bài</p>
-              <p className="text-sm text-gray-600 dark:text-gray-400">{script.caption}</p>
+              <p className="text-sm font-medium text-foreground">Caption đăng bài</p>
+              <ComplianceHighlight
+                text={script.caption}
+                flags={script.complianceFlags}
+                className="text-sm text-muted-foreground"
+              />
               {script.hashtags && script.hashtags.length > 0 && (
-                <p className="text-sm text-blue-600 dark:text-blue-400 mt-1">{script.hashtags.join(' ')}</p>
+                <p className="text-sm text-link mt-1">{script.hashtags.join(' ')}</p>
               )}
             </div>
           )}
 
           {script.shotList && script.shotList.length > 0 && (
             <div>
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Danh sách cảnh quay</p>
-              <ul className="list-disc list-inside text-sm text-gray-600 dark:text-gray-400">
+              <p className="text-sm font-medium text-foreground">Danh sách cảnh quay</p>
+              <ul className="list-disc list-inside text-sm text-muted-foreground">
                 {script.shotList.map((s, i) => (
                   <li key={i}>{s}</li>
                 ))}
@@ -197,7 +227,7 @@ export default function ScriptDetailPage() {
           )}
 
           {script.learnedFrom && script.learnedFrom.length > 0 && (
-            <p className="text-xs text-gray-500 dark:text-gray-500">
+            <p className="text-xs text-muted-foreground">
               Học pattern từ: {script.learnedFrom.map((c) => (c.startsWith('@') ? c : `@${c}`)).join(', ')}
             </p>
           )}
@@ -229,7 +259,7 @@ export default function ScriptDetailPage() {
           </>
         }
       >
-        <p className="text-sm text-gray-600 dark:text-gray-400">
+        <p className="text-sm text-muted-foreground">
           Hành động này không thể hoàn tác. Kịch bản &quot;{script.title}&quot; sẽ bị xoá vĩnh viễn.
         </p>
       </Modal>

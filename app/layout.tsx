@@ -5,6 +5,7 @@ import './globals.css'
 import { AppProvider } from '@/contexts/AppContext'
 import { AppShell } from '@/components/layout/AppShell'
 import { ModalProvider } from '@/components/providers/ModalProvider'
+import { ThemeProvider } from '@/components/providers/ThemeProvider'
 
 const beVietnamPro = Be_Vietnam_Pro({
   subsets: ['latin', 'latin-ext', 'vietnamese'],
@@ -53,14 +54,16 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="vi" className={beVietnamPro.variable}>
+    <html lang="vi" className={beVietnamPro.variable} suppressHydrationWarning>
       <body className="antialiased font-sans bg-background text-foreground">
-        <ModalProvider>
-          <AppProvider>
-            <AppShell>{children}</AppShell>
-            {process.env.NODE_ENV === 'production' && <Analytics />}
-          </AppProvider>
-        </ModalProvider>
+        <ThemeProvider>
+          <ModalProvider>
+            <AppProvider>
+              <AppShell>{children}</AppShell>
+              {process.env.NODE_ENV === 'production' && <Analytics />}
+            </AppProvider>
+          </ModalProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

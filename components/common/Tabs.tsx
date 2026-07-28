@@ -51,7 +51,7 @@ export function TabsList({ children, className }: TabsListProps) {
   return (
     <div
       className={cn(
-        'inline-flex items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-800 p-1 mb-6',
+        'inline-flex items-center justify-center rounded-lg bg-muted p-1 mb-6',
         className
       )}
       role="tablist"
@@ -81,8 +81,8 @@ export function TabsTrigger({ value, children, className }: TabsTriggerProps) {
       className={cn(
         'px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap',
         isActive
-          ? 'bg-white dark:bg-gray-950 text-blue-700 dark:text-blue-400 shadow-sm'
-          : 'text-gray-700 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-300',
+          ? 'bg-card text-link shadow-sm'
+          : 'text-muted-foreground hover:text-foreground',
         className
       )}
       role="tab"

@@ -53,6 +53,13 @@ export const APIFY_DISCOVERY_LIMIT = Number(process.env.APIFY_DISCOVERY_LIMIT) |
  * giá trị mặc định nào - theo đúng chính sách fail-fast cho production path.
  * Có thể override theo từng PromptTemplate (field "aiModel") ở Giai đoạn 2+.
  */
+// 2026-07-28: tạm chuyển từ gemini-3.6-flash sang gemini-3.5-flash trong .env
+// (G5, Giai đoạn 5) - gemini-3.6-flash đã hết quota free-tier trong ngày
+// (giới hạn 20 request/ngày/model), quota tính RIÊNG theo từng model nên đổi
+// model là cách hợp lệ để tiếp tục mà không cần đợi qua ngày mới. Đã thử lần
+// lượt gemini-2.5-flash (404 "no longer available to new users"),
+// gemini-2.0-flash/gemini-2.0-flash-lite (quota free-tier = 0 cho project
+// này) trước khi tìm ra gemini-3.5-flash thật sự gọi được.
 export const GEMINI_MODEL = (() => {
   const value = process.env.GEMINI_MODEL;
   if (!value || value.trim() === "") {
@@ -66,3 +73,14 @@ export const GEMINI_MAX_RETRIES = Number(process.env.GEMINI_MAX_RETRIES) || 5;
 
 /** Bật/tắt tầng dự phòng yt-dlp (tầng (b)) khi Apify KV store không có file. */
 export const ENABLE_YTDLP_FALLBACK = process.env.ENABLE_YTDLP_FALLBACK !== "false";
+
+/**
+ * Hạn mức chi phí + đồng thời cho research job (G7, Giai đoạn 5) - mỗi job
+ * tốn tiền THẬT (Apify + Gemini). Sự cố thật đã xảy ra: 1 job chết giữa
+ * chừng vẫn tốn $0.26 do double-click / chạy trùng không bị chặn.
+ */
+/** Trần tổng chi phí ước tính (USD) cho các job 1 user tạo trong 1 ngày (giờ server). */
+export const DAILY_COST_CAP_USD = Number(process.env.DAILY_COST_CAP_USD) || 5;
+
+/** Số research job đang chạy đồng thời tối đa cho 1 user (chưa completed/failed). */
+export const MAX_CONCURRENT_RESEARCH_JOBS = Number(process.env.MAX_CONCURRENT_RESEARCH_JOBS) || 2;

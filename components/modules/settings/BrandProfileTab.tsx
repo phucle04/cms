@@ -156,7 +156,7 @@ export function BrandProfileTab() {
   return (
     <div className="space-y-4">
       {!profile && (
-        <div className="p-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-sm text-amber-800 dark:text-amber-400">
+        <div className="p-4 rounded-lg bg-warning-muted text-sm text-warning-muted-foreground">
           Chưa có hồ sơ thương hiệu nào - điền thông tin bên dưới để tạo mới. AI sẽ dùng thông tin này khi sinh
           hashtag và kịch bản, nên càng chi tiết càng tốt.
         </div>

@@ -2,8 +2,9 @@
 
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { Settings } from 'lucide-react';
+import { ChevronRight, Settings } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
+import { ThemeSwitcher } from '@/components/common/ThemeSwitcher';
 import { cn } from '@/lib/utils';
 
 const pageNames: Record<string, string> = {
@@ -15,20 +16,20 @@ const pageNames: Record<string, string> = {
   '/settings': 'Cài đặt',
 };
 
-// Chỉ trả về tên trang cho route CON (vd /scripts/abc123) - các trang danh
+// Chỉ trả về breadcrumb cho route CON (vd /scripts/abc123) - các trang danh
 // sách cấp 1 (vd /scripts) đã có PageHeader riêng hiển thị tiêu đề to hơn,
 // hiện thêm ở đây sẽ bị trùng lặp.
-function resolveSubPageName(pathname: string): string | null {
+function resolveBreadcrumb(pathname: string): { label: string; href: string } | null {
   if (pageNames[pathname]) return null;
   const prefix = Object.keys(pageNames)
     .filter((p) => p !== '/' && pathname.startsWith(p))
     .sort((a, b) => b.length - a.length)[0];
-  return prefix ? pageNames[prefix] : null;
+  return prefix ? { label: pageNames[prefix], href: prefix } : null;
 }
 
 export function Header() {
   const pathname = usePathname();
-  const pageName = resolveSubPageName(pathname);
+  const breadcrumb = resolveBreadcrumb(pathname);
   const { sidebarCollapsed } = useAppContext();
 
   return (
@@ -39,10 +40,19 @@ export function Header() {
       )}
     >
       <div className="flex items-center gap-4">
-        {pageName && <h2 className="text-lg font-semibold text-muted-foreground">{pageName}</h2>}
+        {breadcrumb && (
+          <nav aria-label="breadcrumb" className="flex items-center gap-1.5 text-sm">
+            <Link href={breadcrumb.href} className="text-muted-foreground hover:text-foreground transition-colors">
+              {breadcrumb.label}
+            </Link>
+            <ChevronRight size={14} className="text-muted-foreground" />
+            <span className="text-foreground font-medium">Chi tiết</span>
+          </nav>
+        )}
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2">
+        <ThemeSwitcher />
         <Link
           href="/settings"
           className="p-2 rounded-md hover:bg-accent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

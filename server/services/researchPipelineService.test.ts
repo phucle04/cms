@@ -12,6 +12,7 @@ import {
   stageIndexForStatus,
   type EmitFn,
 } from './researchPipelineService';
+import { HashtagSuggestionsSchema, GeneratedScriptsSchema } from '../types/pipeline';
 import type { analyzeVideo, analyzeFromTextOnly } from './geminiVideoService';
 import type { IResearchJob } from '../models/ResearchJob';
 import type { ITrendVideo } from '../models/TrendVideo';
@@ -258,4 +259,101 @@ test('runStage4Analyzing: KHÔNG fail khi 3/5 video là text_only lỗi nhưng �
     findSpy.mock.restore();
     templateSpy.mock.restore();
   }
+});
+
+// ============================================================
+// Giai đoạn 5 (G6b) - bổ sung 3 ca xấu chưa có test trước đó:
+// #1 Apify trả về 0 video, #4 Gemini trả JSON sai schema, #7 kill giữa
+// Stage 4 rồi resume (không gọi lại đã phân tích xong).
+// Các ca #3 (tải video fail -> text_only), #5 (429 liên tục), #6 (Mongo mất
+// kết nối) đã có sẵn test tương ứng: videoDownloadService.test.ts ("cả 2
+// tầng đều fail -> text_only"), geminiVideoService.test.ts (withGeminiRetry
+// 429/503/hết retry), withDbRetry.test.ts (MongoNetworkError) - không lặp
+// lại ở đây.
+// ============================================================
+
+test('runStage2Scraping (G6#1): Apify trả về 0 video -> throw lỗi rõ ràng, không crash', async () => {
+  const searchSpy = mock.method(TikTokService.prototype, 'searchTrendVideosByHashtags', async () => ({
+    videos: [],
+    totalFetched: 0,
+    apifyActualUsd: 0.02,
+  }));
+
+  try {
+    const job = makeFakeJob({ selectedHashtags: ['#khongtontai'] });
+    await assert.rejects(() => runStage2Scraping(job, noopEmit), /Không tìm thấy video nào cho hashtag/);
+    assert.equal(searchSpy.mock.callCount(), 1);
+  } finally {
+    searchSpy.mock.restore();
+  }
+});
+
+test('runStage4Analyzing (G6#7): resume - video đã analyzedAt từ trước KHÔNG gọi lại Gemini', async () => {
+  const alreadyAnalyzedVideo = makeFakeVideo({
+    videoId: 'v-done',
+    analyzedAt: new Date(),
+    analysisConfidence: 'high',
+  });
+  const pendingVideo = makeFakeVideo({ videoId: 'v-pending' });
+
+  const findSpy = mock.method(TrendVideo, 'find', () => fakeTrendVideoFindQuery([alreadyAnalyzedVideo, pendingVideo]));
+  const templateSpy = mock.method(PromptTemplate, 'findOne', () =>
+    fakePromptTemplateFindOneQuery({ systemPrompt: 'sys', userPromptTemplate: 'tpl', aiModel: '', temperature: 0.5 })
+  );
+
+  let analyzeFromTextOnlyCallCount = 0;
+  const analyzeFromTextOnlyFn = (async () => {
+    analyzeFromTextOnlyCallCount += 1;
+    return fakeAnalysisResult();
+  }) as unknown as typeof analyzeFromTextOnly;
+
+  try {
+    const job = makeFakeJob();
+    await runStage4Analyzing(job, noopEmit, {
+      analyzeVideoFn: (async () => {
+        throw new Error('KHÔNG nên gọi analyzeVideo - cả 2 video đều text_only');
+      }) as unknown as typeof analyzeVideo,
+      analyzeFromTextOnlyFn,
+    });
+
+    // Chỉ video CHƯA analyzedAt mới được gọi phân tích - video đã xong (giả
+    // lập kết quả của lần chạy trước khi process bị kill) phải được BỎ QUA,
+    // không tốn thêm tiền Gemini khi resume.
+    assert.equal(analyzeFromTextOnlyCallCount, 1);
+  } finally {
+    findSpy.mock.restore();
+    templateSpy.mock.restore();
+  }
+});
+
+test('HashtagSuggestionsSchema (G6#4): Gemini trả JSON sai schema -> zod throw rõ ràng, không lọt qua', () => {
+  // Thiếu field bắt buộc (reason, score) - mô phỏng Gemini trả JSON hợp lệ
+  // cú pháp nhưng sai cấu trúc đã khai báo trong responseSchema.
+  const malformed = [{ tag: '#test' }, { tag: '#test2', reason: 'ok', score: 999 }];
+  assert.throws(() => HashtagSuggestionsSchema.parse(malformed));
+
+  // JSON hợp lệ nhưng ít hơn 8 phần tử (schema yêu cầu .min(8).max(12))
+  const tooFew = [{ tag: '#a', reason: 'r', score: 50 }];
+  assert.throws(() => HashtagSuggestionsSchema.parse(tooFew));
+});
+
+test('GeneratedScriptsSchema (G6#4): Gemini trả thiếu/sai số phần tử -> zod throw rõ ràng', () => {
+  // Đúng cấu trúc từng phần tử nhưng chỉ có 3/5 kịch bản (schema yêu cầu đúng 5)
+  const oneScript = {
+    title: 't',
+    angle: 'a',
+    targetPainPoint: 'p',
+    hook: 'h',
+    body: [],
+    cta: 'c',
+    caption: 'cap',
+    hashtags: [],
+    shotList: [],
+    learnedFrom: [],
+    confidence: 'high' as const,
+  };
+  assert.throws(() => GeneratedScriptsSchema.parse([oneScript, oneScript, oneScript]));
+
+  // Không phải JSON array hợp lệ theo schema (object rỗng)
+  assert.throws(() => GeneratedScriptsSchema.parse({}));
 });

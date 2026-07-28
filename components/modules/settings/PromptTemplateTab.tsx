@@ -97,11 +97,11 @@ function TemplateEditor({
         </Button>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-sm text-blue-800 dark:text-blue-300">
+        <div className="p-3 rounded-lg bg-info-muted/20 text-sm text-info-muted-foreground">
           <p className="font-medium mb-1.5">Placeholder khả dụng (sẽ tự động được thay bằng dữ liệu thật):</p>
           <div className="flex flex-wrap gap-1.5">
             {PLACEHOLDER_HINTS[template.key]?.map((ph) => (
-              <code key={ph} className="px-1.5 py-0.5 rounded bg-white dark:bg-gray-900 text-xs">
+              <code key={ph} className="px-1.5 py-0.5 rounded bg-background text-xs">
                 {ph}
               </code>
             ))}
@@ -175,7 +175,7 @@ export function PromptTemplateTab() {
   if (templates.length === 0) {
     return (
       <Card>
-        <CardContent className="py-12 text-center text-gray-500 dark:text-gray-400">
+        <CardContent className="py-12 text-center text-muted-foreground">
           Chưa có prompt template nào. Cần chạy seed dữ liệu mặc định ở backend trước.
         </CardContent>
       </Card>

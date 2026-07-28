@@ -52,7 +52,9 @@ export function IdeaForm({
       source: initialData.source,
       priority: initialData.priority,
       status: initialData.status,
-      productId: initialData.productId,
+      // GET /ideas populate productId thành object ProductBrief - phải lấy
+      // đúng .id thì <select> mới preselect đúng (bug im lặng đã tìm ở G4).
+      productId: typeof initialData.productId === 'string' ? initialData.productId : initialData.productId?.id,
     } : {
       priority: 'medium',
       status: 'new',

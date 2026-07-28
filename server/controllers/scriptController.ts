@@ -2,6 +2,15 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { asyncHandler, ApiError } from '../middleware/errorHandler';
 import Script from '../models/Script';
+import BrandProfile from '../models/BrandProfile';
+import { scanScriptCompliance } from '../services/complianceScanner';
+
+// Bộ quét tuân thủ (G6a): tính thêm, không lưu DB - đọc dontList của
+// BrandProfile đang active của user rồi quét nội dung kịch bản.
+async function getActiveDontList(userId: string): Promise<string[]> {
+  const brandProfile = await BrandProfile.findOne({ userId, isActive: true });
+  return brandProfile?.dontList ?? [];
+}
 
 export const getScripts = asyncHandler(async (req: AuthRequest, res: Response) => {
   const { ideaId, status } = req.query;
@@ -10,8 +19,14 @@ export const getScripts = asyncHandler(async (req: AuthRequest, res: Response) =
   if (status) filter.status = status;
 
   const scripts = await Script.find(filter).populate('ideaId').sort({ createdAt: -1 });
+  const dontList = await getActiveDontList(req.userId!);
 
-  res.json({ success: true, data: scripts });
+  const data = scripts.map((script) => ({
+    ...script.toJSON(),
+    complianceFlags: scanScriptCompliance(script.content, dontList),
+  }));
+
+  res.json({ success: true, data });
 });
 
 export const getScript = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -21,7 +36,13 @@ export const getScript = asyncHandler(async (req: AuthRequest, res: Response) =>
     throw new ApiError(404, 'Script not found');
   }
 
-  res.json({ success: true, data: script });
+  const dontList = await getActiveDontList(req.userId!);
+  const data = {
+    ...script.toJSON(),
+    complianceFlags: scanScriptCompliance(script.content, dontList),
+  };
+
+  res.json({ success: true, data });
 });
 
 export const createScript = asyncHandler(async (req: AuthRequest, res: Response) => {

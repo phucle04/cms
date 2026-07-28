@@ -4,22 +4,24 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Sparkles } from 'lucide-react';
+import { ArrowLeft, Sparkles, Info } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { ErrorState } from '@/components/common/ErrorState';
+import { ExpandableText } from '@/components/common/ExpandableText';
 import { Skeleton } from '@/components/ui/skeleton';
 import * as API from '@/lib/api';
-import * as Types from '@/lib/types';
+import { ApiClientError } from '@/lib/api';
+import type * as Types from '@/lib/types';
 
 function Field({ label, value }: { label: string; value?: string | null }) {
   if (!value) return null;
   return (
     <div>
-      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</p>
-      <p className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap mt-1">{value}</p>
+      <p className="text-sm font-medium text-foreground">{label}</p>
+      <ExpandableText text={value} className="text-sm text-muted-foreground whitespace-pre-wrap mt-1" />
     </div>
   );
 }
@@ -32,6 +34,7 @@ export default function ProductDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [creatingJob, setCreatingJob] = useState(false);
   const [showCreateJobConfirm, setShowCreateJobConfirm] = useState(false);
+  const [ageGateMessage, setAgeGateMessage] = useState<string | null>(null);
 
   const loadProduct = async () => {
     setLoading(true);
@@ -59,7 +62,11 @@ export default function ProductDetailPage() {
       toast.success('Đã tạo research job, đang chuyển trang...');
       router.push(`/research/${jobId}`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Tạo research job thất bại');
+      if (e instanceof ApiClientError && e.code === 'AGE_GATE_BLOCKED') {
+        setAgeGateMessage(e.message);
+      } else {
+        toast.error(e instanceof Error ? e.message : 'Tạo research job thất bại');
+      }
       setCreatingJob(false);
     }
   };
@@ -89,7 +96,7 @@ export default function ProductDetailPage() {
     <div className="p-6 space-y-6 max-w-3xl">
       <Link
         href="/products"
-        className="inline-flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft size={14} /> Danh sách sản phẩm
       </Link>
@@ -100,7 +107,10 @@ export default function ProductDetailPage() {
             <CardTitle className="text-xl">{product.name}</CardTitle>
             <CardDescription>{product.category}</CardDescription>
           </div>
-          <StatusBadge domain="product" value={product.status} />
+          <div className="flex items-center gap-2">
+            {product.ageCategory && <StatusBadge domain="productAge" value={product.ageCategory} />}
+            <StatusBadge domain="product" value={product.status} />
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <Field label="Điểm bán hàng độc nhất (USP)" value={product.usp} />
@@ -111,10 +121,10 @@ export default function ProductDetailPage() {
           <Field label="Gợi ý quay/chụp" value={product.shootingTips} />
           {product.keywords && product.keywords.length > 0 && (
             <div>
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Từ khoá</p>
+              <p className="text-sm font-medium text-foreground">Từ khoá</p>
               <div className="flex flex-wrap gap-2 mt-1.5">
                 {product.keywords.map((k) => (
-                  <span key={k} className="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-xs text-gray-700 dark:text-gray-300">
+                  <span key={k} className="px-2 py-0.5 rounded-full bg-muted text-xs text-foreground">
                     {k}
                   </span>
                 ))}
@@ -124,11 +134,20 @@ export default function ProductDetailPage() {
         </CardContent>
       </Card>
 
+      {ageGateMessage && (
+        <Card className="border-info bg-info-muted">
+          <CardContent className="py-4 flex items-start gap-3">
+            <Info size={18} className="text-info-muted-foreground shrink-0 mt-0.5" />
+            <p className="text-sm text-info-muted-foreground">{ageGateMessage}</p>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardContent className="py-6 flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <p className="font-medium text-gray-900 dark:text-white">Nghiên cứu xu hướng TikTok cho sản phẩm này</p>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            <p className="font-medium text-foreground">Nghiên cứu xu hướng TikTok cho sản phẩm này</p>
+            <p className="text-sm text-muted-foreground mt-1">
               AI sẽ gợi ý hashtag, cào video viral, phân tích và sinh 5 kịch bản dựa trên sản phẩm này.
             </p>
           </div>
@@ -155,7 +174,7 @@ export default function ProductDetailPage() {
           </>
         }
       >
-        <p className="text-sm text-gray-600 dark:text-gray-400">
+        <p className="text-sm text-muted-foreground">
           Thao tác này sẽ gọi AI để gợi ý hashtag rồi cào/tải/phân tích video TikTok - tốn chi phí Apify và Gemini thật.
           Bạn có chắc muốn tạo job nghiên cứu cho sản phẩm &quot;{product.name}&quot;?
         </p>

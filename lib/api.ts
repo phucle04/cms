@@ -2,6 +2,16 @@ import * as Types from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
+// Lỗi API có kèm mã lỗi máy-đọc-được (vd 'AGE_GATE_BLOCKED') từ ApiError phía
+// server (xem server/middleware/errorHandler.ts), để UI phân biệt và hiển thị
+// đúng dạng (panel thông tin thay vì toast lỗi đỏ) mà không cần match chuỗi
+// tiếng Việt dễ vỡ khi đổi câu chữ.
+export class ApiClientError extends Error {
+  constructor(message: string, public code?: string, public statusCode?: number) {
+    super(message);
+  }
+}
+
 // Hàm dùng chung: tự động gắn token đăng nhập + xử lý lỗi rõ ràng
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
@@ -18,7 +28,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}));
     const message = errorBody.error || errorBody.message || `API error: ${res.status}`;
-    throw new Error(message);
+    throw new ApiClientError(message, errorBody.code, res.status);
   }
 
   // Một số API có thể trả 204 No Content (ví dụ delete)
@@ -61,8 +71,10 @@ export const IdeaAPI = {
     });
   },
 
-  async delete(id: string): Promise<void> {
-    return apiFetch<void>(`/ideas/${id}`, {
+  // Server trả 200 + {message} (không phải 204), nên khai đúng shape thật -
+  // trước đây khai `Promise<void>` sai với thực tế (tìm ở G4).
+  async delete(id: string): Promise<{ message: string }> {
+    return apiFetch<{ message: string }>(`/ideas/${id}`, {
       method: 'DELETE',
     });
   },
@@ -200,6 +212,10 @@ export const ResearchScriptAPI = {
     return apiFetch<Types.ResearchScript>(`/scripts/${id}`);
   },
 
+  // Lưu ý (G4): server KHÔNG populate `ideaId` ở updateScript (khác
+  // list()/get() có populate) - kết quả trả về của hàm này có `ideaId` là
+  // string thô, không phải object Idea. Đừng đọc field của Idea (vd .title)
+  // trực tiếp từ kết quả update(), phải gọi lại get()/list() nếu cần.
   async update(id: string, data: Partial<Types.ResearchScript>): Promise<Types.ResearchScript> {
     return apiFetch<Types.ResearchScript>(`/scripts/${id}`, {
       method: 'PUT',
@@ -207,8 +223,10 @@ export const ResearchScriptAPI = {
     });
   },
 
-  async delete(id: string): Promise<void> {
-    return apiFetch<void>(`/scripts/${id}`, {
+  // Server trả {success:true, data:null} - apiFetch unwrap ra null (không
+  // phải undefined/void như khai trước đây, tìm ở G4).
+  async delete(id: string): Promise<null> {
+    return apiFetch<null>(`/scripts/${id}`, {
       method: 'DELETE',
     });
   },
@@ -234,6 +252,11 @@ export const BrandProfileAPI = {
     });
   },
 
+  // CẢNH BÁO (G4): server dùng findByIdAndUpdate ghi đè NGUYÊN object lồng
+  // nhau (storeInfo, targetAudience) chứ không merge từng field - gửi
+  // `storeInfo` thiếu field nào sẽ mất field đó thật sự trong DB. Luôn gửi
+  // đủ toàn bộ object lồng (xem cách BrandProfileTab.tsx tự làm: đọc lại
+  // giá trị cũ rồi merge trước khi gọi update()).
   async update(id: string, data: Partial<Types.BrandProfile>): Promise<Types.BrandProfile> {
     return apiFetch<Types.BrandProfile>(`/brand-profiles/${id}`, {
       method: 'PUT',

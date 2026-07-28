@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { asyncHandler, ApiError } from '../middleware/errorHandler';
-import ResearchJob from '../models/ResearchJob';
+import ResearchJob, { type ResearchJobStatus } from '../models/ResearchJob';
 import TrendVideo from '../models/TrendVideo';
 import Idea from '../models/Idea';
 import Script from '../models/Script';
@@ -14,6 +14,19 @@ import {
   type EmitFn,
 } from '../services/researchPipelineService';
 import { publishJobEvent, subscribeJobEvents } from '../utils/jobEventBus';
+import { DAILY_COST_CAP_USD, MAX_CONCURRENT_RESEARCH_JOBS } from '../config/env';
+
+// Job coi là "đang chạy" nếu chưa tới trạng thái cuối (completed/failed) -
+// dùng để chặn job trùng (G6#8) + đếm giới hạn đồng thời (G7).
+const ACTIVE_JOB_STATUSES: ResearchJobStatus[] = [
+  'queued',
+  'generating_hashtags',
+  'awaiting_hashtag_selection',
+  'scraping',
+  'downloading',
+  'analyzing',
+  'generating_scripts',
+];
 
 /**
  * Chạy pipeline NỀN - KHÔNG await ở call site (request phải trả lời ngay).
@@ -44,16 +57,74 @@ function runPipelineInBackground(jobId: string, resume: boolean): void {
   });
 }
 
+// req.body đã qua validateBody(createResearchJobSchema) - productId chắc
+// chắn có mặt, không cần check lại ở đây.
 export const createResearchJob = asyncHandler(async (req: AuthRequest, res: Response) => {
   const { productId, autoSelectTop3 } = req.body;
-
-  if (!productId) {
-    throw new ApiError(400, 'Thiếu productId');
-  }
 
   const product = await ProductBrief.findOne({ _id: productId, userId: req.userId });
   if (!product) {
     throw new ApiError(404, 'Không tìm thấy sản phẩm (productId không hợp lệ hoặc không thuộc user này)');
+  }
+
+  // Cổng tuân thủ tuổi (G6a, Giai đoạn 5): sản phẩm dinh dưỡng cho trẻ dưới
+  // 24 tháng tuổi chịu quy định quảng cáo riêng (Nghị định 100/2014/NĐ-CP) -
+  // không cho tự động chạy AI, chặn tại đây để không phát sinh chi phí Apify/
+  // Gemini cho nội dung bắt buộc phải qua người phụ trách duyệt tay trước.
+  if (product.ageCategory === 'under_24m') {
+    throw new ApiError(
+      422,
+      'Sản phẩm dành cho trẻ dưới 24 tháng tuổi cần người phụ trách tuân thủ duyệt nội dung thủ công trước - hệ thống chưa hỗ trợ tự động chạy AI cho nhóm sản phẩm này (Nghị định 100/2014/NĐ-CP).',
+      'AGE_GATE_BLOCKED'
+    );
+  }
+
+  // Chặn job trùng (G6#8, G7): cùng sản phẩm đã có job đang chạy thì không
+  // tạo thêm - double-click "Tạo kịch bản" trước đây sẽ tạo 2 job tốn tiền
+  // Apify/Gemini gấp đôi cho cùng 1 việc.
+  const duplicateJob = await ResearchJob.findOne({
+    userId: req.userId,
+    productId,
+    status: { $in: ACTIVE_JOB_STATUSES },
+  });
+  if (duplicateJob) {
+    throw new ApiError(
+      409,
+      `Sản phẩm này đã có 1 job đang chạy (job #${duplicateJob.id}, trạng thái "${duplicateJob.status}") - vui lòng chờ job đó xong hoặc thất bại trước khi tạo job mới.`,
+      'DUPLICATE_JOB_RUNNING'
+    );
+  }
+
+  // Giới hạn số job đồng thời (G7): tránh 1 user vô tình (hoặc do bug UI)
+  // mở quá nhiều job cùng lúc, mỗi job đều gọi Apify/Gemini tốn tiền thật.
+  const activeJobCount = await ResearchJob.countDocuments({
+    userId: req.userId,
+    status: { $in: ACTIVE_JOB_STATUSES },
+  });
+  if (activeJobCount >= MAX_CONCURRENT_RESEARCH_JOBS) {
+    throw new ApiError(
+      429,
+      `Đang có ${activeJobCount} job chạy đồng thời (giới hạn ${MAX_CONCURRENT_RESEARCH_JOBS}) - vui lòng chờ bớt job hoàn tất trước khi tạo job mới.`,
+      'CONCURRENT_JOB_LIMIT'
+    );
+  }
+
+  // Trần chi phí/ngày (G7): cộng dồn cost.totalEstimatedUsd của các job user
+  // này đã TẠO trong ngày hôm nay (giờ server) - chặn TRƯỚC khi job mới phát
+  // sinh thêm chi phí Apify/Gemini nếu đã vượt trần.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const todaysJobs = await ResearchJob.find(
+    { userId: req.userId, createdAt: { $gte: startOfToday } },
+    { 'cost.totalEstimatedUsd': 1 }
+  );
+  const spentTodayUsd = todaysJobs.reduce((sum, j) => sum + (j.cost?.totalEstimatedUsd || 0), 0);
+  if (spentTodayUsd >= DAILY_COST_CAP_USD) {
+    throw new ApiError(
+      402,
+      `Đã dùng $${spentTodayUsd.toFixed(2)} hôm nay, vượt trần $${DAILY_COST_CAP_USD}/ngày - vui lòng thử lại vào ngày mai hoặc liên hệ quản trị viên để tăng trần (env DAILY_COST_CAP_USD).`,
+      'DAILY_COST_CAP_EXCEEDED'
+    );
   }
 
   const brandProfile = await BrandProfile.findOne({ userId: req.userId, isActive: true });
@@ -117,15 +188,10 @@ export const getResearchJob = asyncHandler(async (req: AuthRequest, res: Respons
   });
 });
 
+// req.body đã qua validateBody(selectHashtagsSchema) - selectedHashtags chắc
+// chắn là mảng chuỗi không rỗng, không cần check lại ở đây.
 export const selectHashtags = asyncHandler(async (req: AuthRequest, res: Response) => {
   const { selectedHashtags } = req.body;
-
-  if (!Array.isArray(selectedHashtags) || selectedHashtags.length === 0) {
-    throw new ApiError(400, 'selectedHashtags phải là mảng không rỗng');
-  }
-  if (!selectedHashtags.every((tag) => typeof tag === 'string' && tag.trim().length > 0)) {
-    throw new ApiError(400, 'selectedHashtags phải là mảng chuỗi hợp lệ');
-  }
 
   const job = await ResearchJob.findOne({ _id: req.params.id, userId: req.userId });
   if (!job) {

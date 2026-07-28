@@ -133,23 +133,23 @@ export default function ResearchJobPage() {
         <div>
           <Link
             href="/research"
-            className="inline-flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white mb-2"
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-2"
           >
             <ArrowLeft size={14} /> Lịch sử research
           </Link>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2 flex-wrap">
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2 flex-wrap">
             Research:{' '}
             <Link href={`/products/${productLinkId(job.productId)}`} className="hover:underline">
               {productName(job.productId)}
             </Link>
             <StatusBadge domain="researchJob" value={job.status} />
           </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1" title={formatDateTime(job.createdAt)}>
+          <p className="text-sm text-muted-foreground mt-1" title={formatDateTime(job.createdAt)}>
             Chi phí ước tính: {formatCurrency(job.cost.totalEstimatedUsd)} · Tạo {formatRelativeTime(job.createdAt)}
           </p>
         </div>
-        <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-          {connectionMode === 'sse' ? <Wifi size={14} className="text-green-500" /> : <WifiOff size={14} className="text-amber-500" />}
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          {connectionMode === 'sse' ? <Wifi size={14} className="text-success" /> : <WifiOff size={14} className="text-warning" />}
           {connectionMode === 'sse' ? 'Đang cập nhật real-time' : 'Mất kết nối real-time - đang cập nhật mỗi 3 giây'}
         </div>
       </div>
@@ -169,10 +169,10 @@ export default function ResearchJobPage() {
         <Card className="border-destructive/50">
           <CardContent className="pt-6 space-y-3">
             <div className="flex items-start gap-3">
-              <AlertTriangle className="text-red-500 shrink-0 mt-0.5" size={20} />
+              <AlertTriangle className="text-destructive shrink-0 mt-0.5" size={20} />
               <div>
-                <p className="font-semibold text-red-700 dark:text-red-400">Job thất bại ở bước &quot;{job.error?.stage}&quot;</p>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{job.error?.message}</p>
+                <p className="font-semibold text-destructive">Job thất bại ở bước &quot;{job.error?.stage}&quot;</p>
+                <p className="text-sm text-muted-foreground mt-1">{job.error?.message}</p>
               </div>
             </div>
             <Button onClick={handleRetry} isLoading={retrying} variant="destructive">

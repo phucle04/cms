@@ -42,7 +42,6 @@ export default function ResearchHistoryPage() {
 
   useEffect(() => {
     load(page);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
   return (
@@ -84,11 +83,11 @@ export default function ResearchHistoryPage() {
         <div className="space-y-3">
           {jobs.map((job) => (
             <Link key={job.id} href={`/research/${job.id}`}>
-              <Card className="hover:border-gray-300 dark:hover:border-gray-700 transition-colors cursor-pointer">
+              <Card className="hover:border-border-strong transition-colors cursor-pointer">
                 <CardContent className="py-4 flex items-center justify-between gap-4 flex-wrap">
                   <div>
-                    <p className="font-medium text-gray-900 dark:text-white">{productName(job.productId)}</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5" title={formatDateTime(job.createdAt)}>
+                    <p className="font-medium text-foreground">{productName(job.productId)}</p>
+                    <p className="text-sm text-muted-foreground mt-0.5" title={formatDateTime(job.createdAt)}>
                       {formatRelativeTime(job.createdAt)} · {formatCurrency(job.cost.totalEstimatedUsd)}
                     </p>
                   </div>
@@ -105,7 +104,7 @@ export default function ResearchHistoryPage() {
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
             <ChevronLeft size={16} className="mr-1" /> Trước
           </Button>
-          <span className="text-sm text-gray-600 dark:text-gray-400">
+          <span className="text-sm text-muted-foreground">
             Trang {page} / {totalPages}
           </span>
           <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>

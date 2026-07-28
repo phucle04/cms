@@ -38,12 +38,10 @@ export const getIdea = asyncHandler(async (req: AuthRequest, res: Response) => {
   res.json({ success: true, data: idea });
 });
 
+// req.body đã qua validateBody(createIdeaSchema) - title/description/source
+// chắc chắn có mặt, không cần check lại ở đây.
 export const createIdea = asyncHandler(async (req: AuthRequest, res: Response) => {
   const { title, description, source, priority, productId, status } = req.body;
-
-  if (!title || !description || !source) {
-    throw new ApiError(400, 'Missing required fields');
-  }
 
   const idea = await Idea.create({
     userId: req.userId,
@@ -143,12 +141,10 @@ export const generateIdeasFromProduct = asyncHandler(async (req: AuthRequest, re
   });
 });
 
+// req.body đã qua validateBody(bulkUpdateIdeasSchema) - ids chắc chắn là
+// mảng không rỗng, không cần check lại ở đây.
 export const bulkUpdateIdeas = asyncHandler(async (req: AuthRequest, res: Response) => {
   const { ids, status, priority } = req.body;
-
-  if (!ids || !Array.isArray(ids)) {
-    throw new ApiError(400, 'Invalid request');
-  }
 
   const update: any = {};
   if (status) update.status = status;

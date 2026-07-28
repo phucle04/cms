@@ -12,6 +12,10 @@ export interface ProductBrief {
   mediaUrl?: string;
   keywords?: string[];
   status: 'active' | 'archived';
+  // Cổng tuân thủ quảng cáo (Nghị định 100/2014/NĐ-CP): sản phẩm cho trẻ dưới
+  // 24 tháng tuổi bị chặn tạo research job tự động, cần duyệt thủ công.
+  // Optional để tương thích sản phẩm cũ tạo trước khi có trường này.
+  ageCategory?: 'under_24m' | '24m_plus' | 'not_applicable';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -23,7 +27,10 @@ export interface Idea {
   source: string;
   priority: 'low' | 'medium' | 'high';
   status: 'draft' | 'new' | 'in progress' | 'done' | 'discarded';
-  productId?: string;
+  // GET /ideas và GET /ideas/:id populate field này thành ProductBrief đầy đủ;
+  // POST/PUT trả về ObjectId dạng string (không populate). Luôn kiểm tra
+  // `typeof productId === 'string'` trước khi đọc field của ProductBrief.
+  productId?: string | ProductBrief;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -165,6 +172,16 @@ export interface ResearchScriptBodySegment {
   textOnScreen: string;
 }
 
+// Kết quả bộ quét từ khoá tuân thủ (G6a) - tính lúc đọc, không lưu DB.
+// Đây là lớp lọc sơ bộ dựa trên khớp cụm từ, KHÔNG bắt được diễn đạt gián
+// tiếp - xem docs/COSTS.md / CMS_OVERVIEW.md phần cổng tuân thủ.
+export interface ComplianceFlag {
+  phrase: string;
+  source: 'dontList' | 'baseline';
+  context: string;
+  index: number;
+}
+
 export interface ResearchScript {
   id: string;
   userId: string;
@@ -184,6 +201,7 @@ export interface ResearchScript {
   shotList?: string[];
   learnedFrom?: string[];
   confidence?: 'high' | 'medium' | 'low';
+  complianceFlags?: ComplianceFlag[];
   createdAt: string;
   updatedAt: string;
 }

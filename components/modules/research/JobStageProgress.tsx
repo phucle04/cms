@@ -48,12 +48,12 @@ export function JobStageProgress({ status, errorStage, latestPercent, latestMess
                 <div
                   className={cn(
                     'w-8 h-8 rounded-full flex items-center justify-center border-2 shrink-0',
-                    isDone && 'bg-green-500 border-green-500 text-white',
-                    isCurrent && 'border-blue-500 text-blue-600 dark:text-blue-400',
-                    isPausedHere && 'border-amber-500 text-amber-600 dark:text-amber-400',
-                    isFailed && 'bg-red-500 border-red-500 text-white',
+                    isDone && 'bg-success border-success text-success-foreground',
+                    isCurrent && 'border-primary text-link',
+                    isPausedHere && 'border-warning text-warning',
+                    isFailed && 'bg-destructive border-destructive text-destructive-foreground',
                     !isDone && !isCurrent && !isPausedHere && !isFailed &&
-                      'border-gray-300 dark:border-gray-700 text-gray-400 dark:text-gray-600'
+                      'border-border-strong text-muted-foreground'
                   )}
                 >
                   {isDone && <Check size={16} />}
@@ -67,10 +67,10 @@ export function JobStageProgress({ status, errorStage, latestPercent, latestMess
                 <span
                   className={cn(
                     'text-xs font-medium text-center leading-tight',
-                    (isDone || isCurrent) && 'text-gray-900 dark:text-white',
-                    isPausedHere && 'text-amber-600 dark:text-amber-400',
-                    isFailed && 'text-red-600 dark:text-red-400',
-                    !isDone && !isCurrent && !isPausedHere && !isFailed && 'text-gray-400 dark:text-gray-600'
+                    (isDone || isCurrent) && 'text-foreground',
+                    isPausedHere && 'text-warning',
+                    isFailed && 'text-destructive',
+                    !isDone && !isCurrent && !isPausedHere && !isFailed && 'text-muted-foreground'
                   )}
                 >
                   {step.label}
@@ -78,7 +78,7 @@ export function JobStageProgress({ status, errorStage, latestPercent, latestMess
               </div>
               {i < STEPS.length - 1 && (
                 <div
-                  className={cn('flex-1 h-0.5 mx-1 mt-4', isDone ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-800')}
+                  className={cn('flex-1 h-0.5 mx-1 mt-4', isDone ? 'bg-success' : 'bg-muted')}
                 />
               )}
             </div>
@@ -89,7 +89,7 @@ export function JobStageProgress({ status, errorStage, latestPercent, latestMess
       {latestMessage && !failed && status !== 'completed' && !paused && (
         <div className="space-y-1.5">
           <Progress value={latestPercent ?? 0} />
-          <p className="text-sm text-gray-600 dark:text-gray-400">{latestMessage}</p>
+          <p className="text-sm text-muted-foreground">{latestMessage}</p>
         </div>
       )}
     </div>

@@ -14,11 +14,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import * as API from '@/lib/api';
 import * as Types from '@/lib/types';
 
-function ideaTitle(ideaId: Types.ResearchScript['ideaId']): string {
-  if (typeof ideaId === 'string') return '—';
-  return ideaId.title;
-}
-
 export default function ScriptsPage() {
   const [scripts, setScripts] = useState<Types.ResearchScript[]>([]);
   const [jobByScriptId, setJobByScriptId] = useState<Record<string, Types.ResearchJob>>({});
@@ -131,7 +126,6 @@ export default function ScriptsPage() {
               <thead>
                 <tr className="text-left text-muted-foreground border-b border-border bg-muted/50 sticky top-0">
                   <th className="py-3 px-4 font-medium">Tiêu đề</th>
-                  <th className="py-3 px-4 font-medium">Ý tưởng liên quan</th>
                   <th className="py-3 px-4 font-medium">Nguồn</th>
                   <th className="py-3 px-4 font-medium">Trạng thái</th>
                   <th className="py-3 px-4 font-medium whitespace-nowrap">Ngày tạo</th>
@@ -145,15 +139,18 @@ export default function ScriptsPage() {
                       key={script.id}
                       className="border-b border-border/60 last:border-0 hover:bg-accent/50 transition-colors"
                     >
-                      <td className="py-3 px-4">
-                        <Link href={`/scripts/${script.id}`} className="font-medium text-foreground hover:underline">
+                      <td className="py-3 px-4 max-w-xs">
+                        <Link
+                          href={`/scripts/${script.id}`}
+                          title={script.title}
+                          className="font-medium text-foreground hover:underline block truncate"
+                        >
                           {script.title}
                         </Link>
                       </td>
-                      <td className="py-3 px-4 text-muted-foreground">{ideaTitle(script.ideaId)}</td>
                       <td className="py-3 px-4">
                         {job ? (
-                          <Link href={`/research/${job.id}`} className="text-primary hover:underline">
+                          <Link href={`/research/${job.id}`} className="text-link hover:underline">
                             Job nghiên cứu
                           </Link>
                         ) : (

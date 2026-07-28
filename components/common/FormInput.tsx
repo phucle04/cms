@@ -14,7 +14,7 @@ export const FormInput = React.forwardRef<HTMLInputElement, FormInputProps>(
     return (
       <div className="space-y-1">
         {label && (
-          <label className="block text-sm font-medium text-gray-900 dark:text-white">
+          <label className="block text-sm font-medium text-foreground">
             {label}
           </label>
         )}
@@ -25,8 +25,8 @@ export const FormInput = React.forwardRef<HTMLInputElement, FormInputProps>(
           } ${className}`}
           {...props}
         />
-        {error && <p className="text-sm text-red-600 dark:text-red-400">{error.message}</p>}
-        {helperText && <p className="text-sm text-gray-500 dark:text-gray-400">{helperText}</p>}
+        {error && <p className="text-sm text-destructive">{error.message}</p>}
+        {helperText && <p className="text-sm text-muted-foreground">{helperText}</p>}
       </div>
     );
   }

@@ -108,7 +108,7 @@ export function Sidebar() {
                   'flex items-center gap-3 px-4 py-2.5 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   sidebarCollapsed && 'lg:justify-center lg:px-2',
                   isActive
-                    ? 'bg-primary/10 text-primary'
+                    ? 'bg-primary/10 text-link'
                     : 'text-foreground/80 hover:bg-accent hover:text-accent-foreground'
                 )}
               >
