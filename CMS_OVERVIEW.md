@@ -40,9 +40,6 @@ cách kiểm soát.
 /products/[id]
    │  bấm "Tạo kịch bản từ sản phẩm này"
    ▼
-[Cổng tuân thủ tuổi]  ── ageCategory === 'under_24m'? ──▶ CHẶN, hiện panel giải thích
-   │  không bị chặn                                       (Nghị định 100/2014/NĐ-CP)
-   ▼
 [Chặn job trùng / vượt hạn mức]  ── đã có job đang chạy cho SP này? ──▶ 409
    │                                ── đã đủ số job đồng thời? ──▶ 429
    │                                ── đã vượt trần chi phí/ngày? ──▶ 402
@@ -72,17 +69,16 @@ xong. Xem `server/services/researchPipelineService.ts` (đọc comment đầu m�
 Stage) và `server/services/researchPipelineService.test.ts` cho các ca test
 resume cụ thể.
 
-## 3 lớp bảo vệ đã tích hợp
+## Lớp bảo vệ đã tích hợp
 
-### 1. Cổng tuân thủ tuổi (age gate)
-`ProductBrief.ageCategory` = `under_24m` | `24m_plus` | `not_applicable`.
-Sản phẩm `under_24m` bị chặn tạo research job tự động ngay tại
-`POST /api/research/jobs` (422, code `AGE_GATE_BLOCKED`) - Nghị định
-100/2014/NĐ-CP quy định quảng cáo riêng cho sản phẩm dinh dưỡng trẻ dưới 24
-tháng, cần người phụ trách duyệt nội dung thủ công, hệ thống chưa hỗ trợ tự
-động cho nhóm này.
+> Lưu ý: cổng chặn tự động theo `ageCategory` (dựa trên Nghị định
+> 100/2014/NĐ-CP) đã được **gỡ bỏ theo yêu cầu** - hệ thống hiện cho phép tạo
+> research job từ mọi sản phẩm bất kể độ tuổi. Trường `ProductBrief.ageCategory`
+> vẫn còn trong dữ liệu (hiển thị dạng badge) nhưng không còn tác dụng chặn -
+> việc tuân thủ quảng cáo cho sản phẩm dưới 24 tháng nay hoàn toàn phụ thuộc
+> vào người phụ trách tự xem xét trước khi đăng.
 
-### 2. Bộ quét tuân thủ (compliance scanner)
+### Bộ quét tuân thủ (compliance scanner)
 `server/services/complianceScanner.ts` - so khớp từ khoá **sơ bộ**, quét mỗi
 kịch bản với (a) danh sách cấm baseline (các cụm claim y tế phổ biến: "chữa
 bệnh", "thay thế sữa mẹ"...) và (b) `BrandProfile.dontList`. Kết quả đính kèm
@@ -98,7 +94,7 @@ hiệu quả hơn: viết rõ trong `dontList`/prompt template những dạng ng
 thể cần tránh (xem ví dụ thật trong `docs/COSTS.md` phần "Sửa 1 lần, áp dụng
 mọi lần sinh sau").
 
-### 3. Hạn mức chi phí + chặn job trùng
+### Hạn mức chi phí + chặn job trùng
 `server/controllers/researchJobController.ts::createResearchJob` chặn 3
 trường hợp trước khi tốn bất kỳ chi phí Apify/Gemini nào:
 - Cùng sản phẩm đã có job đang chạy → 409 `DUPLICATE_JOB_RUNNING`

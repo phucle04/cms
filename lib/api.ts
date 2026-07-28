@@ -2,7 +2,7 @@ import * as Types from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
-// Lỗi API có kèm mã lỗi máy-đọc-được (vd 'AGE_GATE_BLOCKED') từ ApiError phía
+// Lỗi API có kèm mã lỗi máy-đọc-được (vd 'DUPLICATE_JOB_RUNNING') từ ApiError phía
 // server (xem server/middleware/errorHandler.ts), để UI phân biệt và hiển thị
 // đúng dạng (panel thông tin thay vì toast lỗi đỏ) mà không cần match chuỗi
 // tiếng Việt dễ vỡ khi đổi câu chữ.

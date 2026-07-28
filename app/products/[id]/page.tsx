@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Sparkles, Info } from 'lucide-react';
+import { ArrowLeft, Sparkles } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
@@ -13,7 +13,6 @@ import { ErrorState } from '@/components/common/ErrorState';
 import { ExpandableText } from '@/components/common/ExpandableText';
 import { Skeleton } from '@/components/ui/skeleton';
 import * as API from '@/lib/api';
-import { ApiClientError } from '@/lib/api';
 import type * as Types from '@/lib/types';
 
 function Field({ label, value }: { label: string; value?: string | null }) {
@@ -34,7 +33,6 @@ export default function ProductDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [creatingJob, setCreatingJob] = useState(false);
   const [showCreateJobConfirm, setShowCreateJobConfirm] = useState(false);
-  const [ageGateMessage, setAgeGateMessage] = useState<string | null>(null);
 
   const loadProduct = async () => {
     setLoading(true);
@@ -62,11 +60,7 @@ export default function ProductDetailPage() {
       toast.success('Đã tạo research job, đang chuyển trang...');
       router.push(`/research/${jobId}`);
     } catch (e) {
-      if (e instanceof ApiClientError && e.code === 'AGE_GATE_BLOCKED') {
-        setAgeGateMessage(e.message);
-      } else {
-        toast.error(e instanceof Error ? e.message : 'Tạo research job thất bại');
-      }
+      toast.error(e instanceof Error ? e.message : 'Tạo research job thất bại');
       setCreatingJob(false);
     }
   };
@@ -133,15 +127,6 @@ export default function ProductDetailPage() {
           )}
         </CardContent>
       </Card>
-
-      {ageGateMessage && (
-        <Card className="border-info bg-info-muted">
-          <CardContent className="py-4 flex items-start gap-3">
-            <Info size={18} className="text-info-muted-foreground shrink-0 mt-0.5" />
-            <p className="text-sm text-info-muted-foreground">{ageGateMessage}</p>
-          </CardContent>
-        </Card>
-      )}
 
       <Card>
         <CardContent className="py-6 flex items-center justify-between gap-4 flex-wrap">

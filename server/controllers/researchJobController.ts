@@ -67,18 +67,6 @@ export const createResearchJob = asyncHandler(async (req: AuthRequest, res: Resp
     throw new ApiError(404, 'Không tìm thấy sản phẩm (productId không hợp lệ hoặc không thuộc user này)');
   }
 
-  // Cổng tuân thủ tuổi (G6a, Giai đoạn 5): sản phẩm dinh dưỡng cho trẻ dưới
-  // 24 tháng tuổi chịu quy định quảng cáo riêng (Nghị định 100/2014/NĐ-CP) -
-  // không cho tự động chạy AI, chặn tại đây để không phát sinh chi phí Apify/
-  // Gemini cho nội dung bắt buộc phải qua người phụ trách duyệt tay trước.
-  if (product.ageCategory === 'under_24m') {
-    throw new ApiError(
-      422,
-      'Sản phẩm dành cho trẻ dưới 24 tháng tuổi cần người phụ trách tuân thủ duyệt nội dung thủ công trước - hệ thống chưa hỗ trợ tự động chạy AI cho nhóm sản phẩm này (Nghị định 100/2014/NĐ-CP).',
-      'AGE_GATE_BLOCKED'
-    );
-  }
-
   // Chặn job trùng (G6#8, G7): cùng sản phẩm đã có job đang chạy thì không
   // tạo thêm - double-click "Tạo kịch bản" trước đây sẽ tạo 2 job tốn tiền
   // Apify/Gemini gấp đôi cho cùng 1 việc.

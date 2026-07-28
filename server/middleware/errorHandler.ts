@@ -4,7 +4,7 @@ export class ApiError extends Error {
   constructor(
     public statusCode: number,
     public message: string,
-    // Mã lỗi máy-đọc-được tuỳ chọn (vd 'AGE_GATE_BLOCKED', 'COST_CAP_EXCEEDED')
+    // Mã lỗi máy-đọc-được tuỳ chọn (vd 'DUPLICATE_JOB_RUNNING', 'DAILY_COST_CAP_EXCEEDED')
     // để frontend phân biệt và hiển thị đúng UI (panel info thay vì toast lỗi
     // đỏ), không phải match chuỗi message tiếng Việt dễ vỡ khi đổi câu chữ.
     public code?: string

@@ -25,31 +25,21 @@ sở thích, không ảnh hưởng đến dữ liệu.
 Bấm **"Thêm sản phẩm"**, điền các trường:
 - **Tên sản phẩm, Ngành hàng, USP** (điểm bán hàng độc nhất) - bắt buộc
 - **Nỗi đau khách hàng, FAQ, Bằng chứng xã hội, So sánh, Gợi ý quay/chụp** - càng chi tiết, AI sinh nội dung càng sát thực tế
-- **Độ tuổi phù hợp** - BẮT BUỘC chọn đúng 1 trong 3:
-  - *Dưới 24 tháng tuổi* - sản phẩm dành cho trẻ sơ sinh/nhũ nhi. **Chọn mục
-    này sẽ khiến hệ thống KHÔNG cho tạo nghiên cứu AI tự động** cho sản phẩm
-    này (xem mục 3b) - đây là quy định pháp lý, không phải lỗi.
-  - *Từ 24 tháng tuổi trở lên* - sản phẩm cho trẻ lớn hơn, chạy AI bình thường.
+- **Độ tuổi phù hợp** - chọn đúng 1 trong 3 (chỉ mang tính phân loại/hiển thị
+  badge, hiện KHÔNG chặn tạo nghiên cứu AI cho bất kỳ nhóm nào - sản phẩm dưới
+  24 tháng tuổi chịu quy định quảng cáo riêng theo Nghị định 100/2014/NĐ-CP,
+  người phụ trách cần tự xem xét nội dung trước khi đăng):
+  - *Dưới 24 tháng tuổi* - sản phẩm dành cho trẻ sơ sinh/nhũ nhi.
+  - *Từ 24 tháng tuổi trở lên* - sản phẩm cho trẻ lớn hơn.
   - *Không áp dụng* - sản phẩm không phải sữa/dinh dưỡng trẻ nhỏ.
 
 ![Chi tiết sản phẩm](./ui-screenshots/03-products-detail.png)
 
 ## 3. Tạo nghiên cứu TikTok
 
-Vào trang chi tiết sản phẩm, bấm **"Tạo kịch bản từ sản phẩm này"**.
-
-### 3a. Nếu sản phẩm hợp lệ (24 tháng+ hoặc không áp dụng)
-
-Hệ thống xác nhận lại (thao tác này tốn chi phí AI/scraping thật), bấm
-**"Bắt đầu"** để tạo job nghiên cứu.
-
-### 3b. Nếu sản phẩm là "Dưới 24 tháng tuổi"
-
-Hệ thống sẽ **chặn lại** và hiện 1 khung thông báo màu xanh dương giải thích
-lý do (không phải lỗi đỏ) - sản phẩm dinh dưỡng cho trẻ dưới 24 tháng chịu quy
-định quảng cáo riêng theo Nghị định 100/2014/NĐ-CP, cần người phụ trách tuân
-thủ xem và duyệt nội dung thủ công trước, hệ thống chưa hỗ trợ chạy AI tự động
-cho nhóm sản phẩm này. Đây là tính năng bảo vệ có chủ đích, không cần báo lỗi.
+Vào trang chi tiết sản phẩm, bấm **"Tạo kịch bản từ sản phẩm này"**. Hệ thống
+xác nhận lại (thao tác này tốn chi phí AI/scraping thật), bấm **"Bắt đầu"** để
+tạo job nghiên cứu.
 
 ## 4. Chọn hashtag
 
