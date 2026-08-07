@@ -25,8 +25,15 @@ export interface IScript extends Document {
   // researchPipelineService.ts Stage 5) - content/callToAction ở trên vẫn
   // được điền (bản text rút gọn, tương thích ngược với UI/tính năng cũ đọc
   // 2 field đó), còn field dưới đây giữ đầy đủ cấu trúc gốc theo timeline.
-  angle?: string;
+  // Giai đoạn 6 Phase 4: thay "angle" cố định bằng combo (hook, pain point,
+  // DISC) THẬT đã dùng để sinh kịch bản này - *EntryId tham chiếu
+  // KnowledgeEntry, *Name/targetPainPoint là SNAPSHOT tên/mô tả tại thời điểm
+  // sinh (không tự cập nhật nếu entry gốc bị sửa/xoá sau này).
+  hookEntryId?: string;
+  hookName?: string;
+  painPointEntryId?: string;
   targetPainPoint?: string;
+  discCode?: 'D' | 'I' | 'S' | 'C';
   body?: IScriptBodySegment[];
   caption?: string;
   hashtags?: string[];
@@ -59,8 +66,11 @@ const scriptSchema = new Schema<IScript>(
       default: 'draft',
     },
     feedback: String,
-    angle: String,
+    hookEntryId: String,
+    hookName: String,
+    painPointEntryId: String,
     targetPainPoint: String,
+    discCode: { type: String, enum: ['D', 'I', 'S', 'C'] },
     body: [
       {
         tStart: Number,

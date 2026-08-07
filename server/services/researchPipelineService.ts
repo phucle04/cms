@@ -1,11 +1,12 @@
 import { GoogleGenAI } from '@google/genai';
-import ResearchJob, { IResearchJob, ResearchJobStatus } from '../models/ResearchJob';
+import ResearchJob, { IResearchJob, IResearchJobCombo, ResearchJobStatus } from '../models/ResearchJob';
 import ProductBrief, { IProductBrief } from '../models/ProductBrief';
 import BrandProfile from '../models/BrandProfile';
 import PromptTemplate from '../models/PromptTemplate';
 import TrendVideo, { ITrendVideo } from '../models/TrendVideo';
 import Idea from '../models/Idea';
 import Script from '../models/Script';
+import KnowledgeEntry, { IKnowledgeEntry } from '../models/KnowledgeEntry';
 import { GEMINI_MODEL, APIFY_DISCOVERY_LIMIT } from '../config/env';
 import { withGeminiRetry, estimateGeminiCost, type GeminiUsage, type PromptTemplateLike } from './geminiVideoService';
 import { TikTokService, estimateApifyCost, normalizeToTrendVideo } from './tiktokService';
@@ -17,7 +18,20 @@ import {
   type DownloadableVideo,
 } from './videoDownloadService';
 import { analyzeVideo, analyzeFromTextOnly } from './geminiVideoService';
-import { HashtagSuggestionsSchema, GeneratedScriptsSchema } from '../types/pipeline';
+import {
+  loadApprovedKnowledgeLibrary,
+  buildKnowledgeMatchState,
+  formatLibraryForPrompt,
+  resolveKnowledgeMatch,
+} from './knowledgeMatchService';
+import {
+  buildValueCommentSeenState,
+  saveValueComments,
+  loadRecentValueComments,
+  formatValueCommentBankForPrompt,
+} from './valueCommentService';
+import { computeTrendStats, buildSuggestedCombos } from './trendStatsService';
+import { HashtagSuggestionsSchema, GeneratedScriptsArraySchema, type GeneratedScript } from '../types/pipeline';
 import type { VideoAnalysis } from '../types/videoAnalysis';
 import type { ApifyTikTokResult } from '../types/apify';
 import { withDbRetry } from '../utils/withDbRetry';
@@ -175,6 +189,48 @@ export function recomputeTotalCost(job: IResearchJob): void {
   job.cost.totalEstimatedUsd = job.cost.apifyActualUsd + job.cost.geminiEstimatedUsd;
 }
 
+/**
+ * Giai đoạn 6 Phase 3: ước tính chi phí THÔ TRƯỚC khi tạo job (chưa có
+ * hashtag/video thật) - dùng để hiển thị số tiền dự kiến ở modal xác nhận
+ * trước khi bấm "Bắt đầu", theo đúng giới hạn videoScanCount/scriptCount
+ * người dùng chọn. Giả định 3 hashtag (mặc định autoSelectTop3) cho phần
+ * Apify PASS 1; phần Gemini dùng số token trung bình quan sát qua các lần
+ * chạy thật trước đó - ĐÂY LÀ ƯỚC TÍNH, không phải billing chính xác (khác
+ * apifyActualUsd đọc được sau khi Stage 2 chạy xong - xem recomputeTotalCost).
+ */
+const ASSUMED_HASHTAG_COUNT_FOR_ESTIMATE = 3;
+const AVG_HASHTAG_GEN_INPUT_TOKENS = 400;
+const AVG_HASHTAG_GEN_OUTPUT_TOKENS = 500;
+const AVG_VIDEO_ANALYSIS_INPUT_TOKENS = 4000;
+const AVG_VIDEO_ANALYSIS_OUTPUT_TOKENS = 900;
+const AVG_SCRIPT_GEN_INPUT_TOKENS = 2500;
+const AVG_SCRIPT_GEN_OUTPUT_TOKENS_PER_SCRIPT = 350;
+
+export interface ResearchJobCostEstimate {
+  apifyEstimatedUsd: number;
+  geminiEstimatedUsd: number;
+  totalEstimatedUsd: number;
+}
+
+export function estimateResearchJobCost(videoScanCount: number, scriptCount: number): ResearchJobCostEstimate {
+  const estimatedDiscoveryItems = ASSUMED_HASHTAG_COUNT_FOR_ESTIMATE * APIFY_DISCOVERY_LIMIT;
+  const apifyEstimatedUsd = estimateApifyCost(estimatedDiscoveryItems, false) + estimateApifyCost(videoScanCount, true);
+
+  const geminiInputTokens =
+    AVG_HASHTAG_GEN_INPUT_TOKENS + AVG_VIDEO_ANALYSIS_INPUT_TOKENS * videoScanCount + AVG_SCRIPT_GEN_INPUT_TOKENS;
+  const geminiOutputTokens =
+    AVG_HASHTAG_GEN_OUTPUT_TOKENS +
+    AVG_VIDEO_ANALYSIS_OUTPUT_TOKENS * videoScanCount +
+    AVG_SCRIPT_GEN_OUTPUT_TOKENS_PER_SCRIPT * scriptCount;
+  const geminiEstimatedUsd = estimateGeminiCost(GEMINI_MODEL, geminiInputTokens, geminiOutputTokens);
+
+  return {
+    apifyEstimatedUsd,
+    geminiEstimatedUsd,
+    totalEstimatedUsd: Math.round((apifyEstimatedUsd + geminiEstimatedUsd) * 100000) / 100000,
+  };
+}
+
 async function fetchPromptTemplate(userId: string, key: 'hashtag' | 'video_analysis' | 'script_gen') {
   const template = await PromptTemplate.findOne({ userId, key }).sort({ isDefault: -1, createdAt: -1 });
   if (!template) {
@@ -231,7 +287,7 @@ export async function runStage1GenerateHashtags(job: IResearchJob, emit: EmitFn)
       brandName: brandProfile?.brandName ?? '(chưa có brand profile)',
       usp: product.usp,
       painPoints: product.painPoints ?? '',
-      targetAudience: brandProfile?.targetAudience?.painPoints?.join(', ') ?? '',
+      targetAudience: product.targetAudience ?? '',
     });
 
     const { text, usage } = await callGeminiJson({
@@ -324,7 +380,10 @@ export async function runStage2Scraping(job: IResearchJob, emit: EmitFn): Promis
       throw new Error('Không có hashtag nào được chọn (selectedHashtags rỗng) - không thể cào video');
     }
 
-    const result = await tiktokService.searchTrendVideosByHashtags(job.selectedHashtags, { topN: 5 });
+    const result = await tiktokService.searchTrendVideosByHashtags(job.selectedHashtags, {
+      topN: job.videoScanCount,
+      maxAgeMonths: job.maxVideoAgeMonths,
+    });
 
     if (result.videos.length === 0) {
       throw new Error(
@@ -551,6 +610,18 @@ export async function runStage4Analyzing(
   await pushProgress(job, 'analyzing', 'Đọc PromptTemplate(video_analysis)...', 0, emit);
   const template = await fetchPromptTemplate(job.userId.toString(), 'video_analysis');
 
+  // Tải kho hook/pain point ĐÃ DUYỆT 1 LẦN cho cả Stage 4 (Giai đoạn 6, Phase
+  // 2) - đưa Gemini chọn ID khớp nhất thay vì tự bịa; state bị mutate dần khi
+  // có entry 'learned' mới tạo, để video sau trong CÙNG job không tạo trùng.
+  const userIdStr = job.userId.toString();
+  const knowledgeLibrary = await loadApprovedKnowledgeLibrary(userIdStr);
+  const knowledgeMatchState = buildKnowledgeMatchState(knowledgeLibrary);
+  const hookLibraryText = formatLibraryForPrompt(knowledgeLibrary.hook);
+  const painPointLibraryText = formatLibraryForPrompt(knowledgeLibrary.painPoint);
+  // Giai đoạn 6 Phase 6: state chống lưu trùng "value comment" xuyên suốt cả
+  // lượt Stage 4 - xem valueCommentService.ts.
+  const valueCommentSeen = buildValueCommentSeenState();
+
   let idx = 0;
   let successCount = 0;
 
@@ -592,6 +663,9 @@ export async function runStage4Analyzing(
             caption: video.caption,
             playCount: video.playCount,
             diggCount: video.diggCount,
+            hookLibrary: hookLibraryText,
+            painPointLibrary: painPointLibraryText,
+            topComments: video.topComments,
           },
         });
       } else {
@@ -608,14 +682,38 @@ export async function runStage4Analyzing(
             hashtags: video.hashtags,
             topComments: video.topComments,
             subtitles,
+            hookLibrary: hookLibraryText,
+            painPointLibrary: painPointLibraryText,
           },
           template,
         });
       }
 
+      // Resolve knowledgeMatch THÔ Gemini trả về với kho THẬT trong DB (đối
+      // chiếu ID có sẵn, tạo entry 'learned'+'pending' mới nếu Gemini đề
+      // xuất pattern chưa có) - xem knowledgeMatchService.ts. Đè lại field
+      // knowledgeMatch bằng kết quả ĐÃ RESOLVE trước khi lưu, để phần đọc lại
+      // sau này (Phase 3 - thống kê xu hướng) dùng ID/discCode đáng tin cậy.
+      const resolvedKnowledgeMatch = await resolveKnowledgeMatch({
+        userId: userIdStr,
+        raw: analysisResult.analysis.knowledgeMatch,
+        state: knowledgeMatchState,
+      });
+
+      // Giai đoạn 6 Phase 6: lưu "value comment" AI tự đề xuất (không cần
+      // duyệt) - chỉ chấp nhận bình luận khớp verbatim với topComments THẬT
+      // của chính video này, xem valueCommentService.ts.
+      await saveValueComments({
+        userId: userIdStr,
+        videoId: video.videoId,
+        topComments: video.topComments,
+        raw: analysisResult.analysis.valueComments,
+        seenNormalized: valueCommentSeen,
+      });
+
       // Lưu analysis NGAY sau khi Gemini trả về, KHÔNG đợi xử lý xong cả 5
       // video mới ghi 1 lượt - đây là dữ liệu đã tốn tiền Gemini để lấy.
-      video.analysis = analysisResult.analysis;
+      video.analysis = { ...analysisResult.analysis, knowledgeMatch: resolvedKnowledgeMatch };
       video.analysisConfidence = analysisResult.analysis.analysisConfidence;
       video.analyzedAt = new Date();
       await withDbRetry(() => video.save(), `Stage4 save analysis ${video.videoId}`);
@@ -659,20 +757,69 @@ export async function runStage4Analyzing(
 
   console.log(`[Pipeline] Stage 4 xong - ${successCount}/${videos.length} video phân tích thành công`);
   emit('stage_complete', { jobId: job._id, stage: 'analyzing', successCount, total: videos.length });
+
+  // Giai đoạn 6 Phase 3: dừng lại chờ người dùng xem xu hướng + chọn combo
+  // hook/pain point/DISC cho từng kịch bản - TRỪ khi đã chọn từ trước (resume,
+  // cùng pattern job.selectedHashtags ở Stage 1). `videos` ở đây là CHÍNH các
+  // object đã bị mutate video.analysis trong vòng lặp trên (cùng reference),
+  // không cần query lại DB.
+  if (job.selectedCombos.length > 0) {
+    console.log(
+      `[Pipeline] Stage 4 (resume): đã có ${job.selectedCombos.length} selectedCombos từ trước - bỏ qua tính lại xu hướng.`
+    );
+    return;
+  }
+
+  const analyzedVideos = videos.filter((v) => v.analysis);
+  const trendStats = await computeTrendStats(analyzedVideos);
+  const suggestedCombos = buildSuggestedCombos(trendStats, job.scriptCount);
+
+  job.trendStats = trendStats;
+  job.suggestedCombos = suggestedCombos;
+  await setStatus(job, 'awaiting_combo_selection');
+
+  await pushProgress(
+    job,
+    'awaiting_combo_selection',
+    `Đã phân tích xong ${successCount} video - chờ chọn combo hook/pain point/DISC cho ${job.scriptCount} kịch bản`,
+    100,
+    emit
+  );
+
+  console.log(`[Pipeline] Stage 4 xong - DỪNG chờ người dùng chọn combo (jobId=${jobId}).`);
+  emit('stage_complete', { jobId: job._id, stage: 'awaiting_combo_selection', trendStats, suggestedCombos });
 }
 
 // ============================================================
 // STAGE 5 - generating_scripts
 // ============================================================
 
+/**
+ * KHÔNG đặt minItems/maxItems ở đây (đã thử rồi bỏ - xem BUG THẬT bên dưới).
+ * Số lượng ĐÚNG job.selectedCombos.length được ép qua text prompt
+ * ({{scriptCount}} trong userPromptTemplate) + đối chiếu/cắt bớt/throw rõ
+ * ràng SAU KHI parse response (xem runStage5GenerateScripts, dùng
+ * GeneratedScriptsArraySchema trong types/pipeline.ts).
+ *
+ * LỊCH SỬ 2 BUG THẬT liên tiếp ở đúng chỗ này, ghi lại để không lặp lại:
+ * (1) Ban đầu KHÔNG có minItems/maxItems -> Gemini thỉnh thoảng sinh THIẾU
+ *     item dù prompt ghi rõ số lượng (job 6a6c10ef..., scriptCount=10) ->
+ *     zod bắt được NHƯNG sau khi tiền Gemini đã tốn, job fail toàn bộ.
+ * (2) Thêm minItems/maxItems để "sửa" (1) -> Gemini API trả lỗi CỨNG
+ *     `400 INVALID_ARGUMENT: Request contains an invalid argument` - đây là
+ *     giới hạn KHÔNG ghi rõ trong doc chính thức của Gemini (chỉ thấy report
+ *     cộng đồng): minItems/maxItems trên 1 responseSchema lồng nhau phức tạp
+ *     có thể bị từ chối thẳng, khiến Stage 5 fail 100% MỌI lần gọi (còn tệ
+ *     hơn (1), vốn chỉ thỉnh thoảng thiếu item).
+ * -> Quay lại KHÔNG dùng minItems/maxItems, xử lý sai lệch số lượng bằng code
+ * (cắt bớt nếu thừa, throw rõ ràng nếu thiếu - xem runStage5GenerateScripts).
+ */
 const SCRIPT_GEN_RESPONSE_SCHEMA = {
   type: 'array',
   items: {
     type: 'object',
     properties: {
       title: { type: 'string' },
-      angle: { type: 'string' },
-      targetPainPoint: { type: 'string' },
       hook: { type: 'string' },
       body: {
         type: 'array',
@@ -695,27 +842,96 @@ const SCRIPT_GEN_RESPONSE_SCHEMA = {
       learnedFrom: { type: 'array', items: { type: 'string' } },
       confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
     },
-    required: [
-      'title',
-      'angle',
-      'targetPainPoint',
-      'hook',
-      'body',
-      'cta',
-      'caption',
-      'hashtags',
-      'shotList',
-      'learnedFrom',
-      'confidence',
-    ],
+    required: ['title', 'hook', 'body', 'cta', 'caption', 'hashtags', 'shotList', 'learnedFrom', 'confidence'],
   },
 } as const;
+
+const DISC_LABELS: Record<'D' | 'I' | 'S' | 'C', string> = {
+  D: 'D - Dominance (Quyết đoán)',
+  I: 'I - Influence (Cảm xúc/Xã hội)',
+  S: 'S - Steadiness (Ổn định/An toàn)',
+  C: 'C - Conscientiousness (Phân tích/Dữ liệu)',
+};
+
+/**
+ * Tải sẵn (1 lần, theo lô) toàn bộ KnowledgeEntry được `combos` tham chiếu tới
+ * (hook + pain point theo ID cụ thể, disc theo discCode) - dùng để: (1) dựng
+ * comboContext cho prompt Gemini, (2) gắn snapshot tên/mô tả THẬT vào
+ * Idea/Script sau khi Gemini trả lời, KHÔNG tin Gemini tự nhắc lại tên entry.
+ */
+interface ComboKnowledgeMaps {
+  hookMap: Map<string, IKnowledgeEntry>;
+  painPointMap: Map<string, IKnowledgeEntry>;
+  discMap: Map<string, IKnowledgeEntry>;
+}
+
+async function loadComboKnowledgeMaps(userId: string, combos: IResearchJobCombo[]): Promise<ComboKnowledgeMaps> {
+  const hookIds = [...new Set(combos.map((c) => c.hookEntryId).filter((id): id is string => !!id))];
+  const painPointIds = [...new Set(combos.map((c) => c.painPointEntryId).filter((id): id is string => !!id))];
+
+  const [hooks, painPoints, discEntries] = await Promise.all([
+    hookIds.length > 0 ? KnowledgeEntry.find({ _id: { $in: hookIds } }) : Promise.resolve([]),
+    painPointIds.length > 0 ? KnowledgeEntry.find({ _id: { $in: painPointIds } }) : Promise.resolve([]),
+    KnowledgeEntry.find({ userId, storeType: 'disc', status: 'approved' }),
+  ]);
+
+  return {
+    hookMap: new Map(hooks.map((h) => [String(h._id), h])),
+    painPointMap: new Map(painPoints.map((p) => [String(p._id), p])),
+    discMap: new Map(discEntries.filter((d) => d.discCode).map((d) => [d.discCode as string, d])),
+  };
+}
+
+function describeKnowledgeEntry(entry: IKnowledgeEntry | undefined): string {
+  if (!entry) return '';
+  return `${entry.name} - ${entry.description}${entry.example ? ` (VD thực tế: "${entry.example}")` : ''}`;
+}
+
+/**
+ * Dựng phần prompt liệt kê ĐÚNG combo cho từng slot kịch bản, theo ĐÚNG thứ tự
+ * `combos` (index i -> kịch bản thứ i+1) - đây là điểm THAY THẾ hệ "5 góc tiếp
+ * cận" cố định cũ: giờ mỗi kịch bản bị RÀNG BUỘC bởi 1 bộ hook/pain point/DISC
+ * cụ thể thay vì Gemini tự chọn góc. Slot nào combo để null (người dùng không
+ * chỉ định) -> để Gemini tự do quyết định riêng phần đó.
+ */
+function buildComboContext(combos: IResearchJobCombo[], maps: ComboKnowledgeMaps): string {
+  return combos
+    .map((combo, i) => {
+      const hookText = combo.hookEntryId
+        ? describeKnowledgeEntry(maps.hookMap.get(combo.hookEntryId))
+        : 'KHÔNG chỉ định - tự chọn công thức hook phù hợp nhất với sản phẩm và bối cảnh xu hướng';
+      const painPointText = combo.painPointEntryId
+        ? describeKnowledgeEntry(maps.painPointMap.get(combo.painPointEntryId))
+        : 'KHÔNG chỉ định - tự chọn nỗi đau khách hàng phù hợp nhất với sản phẩm';
+      const discEntry = combo.discCode ? maps.discMap.get(combo.discCode) : undefined;
+      const discText = combo.discCode
+        ? discEntry
+          ? describeKnowledgeEntry(discEntry)
+          : DISC_LABELS[combo.discCode]
+        : 'KHÔNG chỉ định - tự chọn giọng văn phù hợp nhất';
+
+      return (
+        `Kịch bản ${i + 1}:\n` +
+        `- Hook BẮT BUỘC dùng: ${hookText}\n` +
+        `- Pain point BẮT BUỘC khai thác: ${painPointText}\n` +
+        `- Kiểu khách hàng (DISC) BẮT BUỘC nhắm tới: ${discText}`
+      );
+    })
+    .join('\n\n');
+}
 
 function buildProductContext(product: IProductBrief): string {
   const parts = [`Tên sản phẩm: ${product.name}`, `Ngành hàng: ${product.category}`, `USP: ${product.usp}`];
   if (product.painPoints) parts.push(`Pain point đã biết: ${product.painPoints}`);
+  if (product.targetAudience) parts.push(`Đối tượng phù hợp: ${product.targetAudience}`);
+  if (product.usageInstructions) parts.push(`Cách dùng & liều dùng (trích dẫn đúng, không tự suy đoán): ${product.usageInstructions}`);
+  if (product.originCountry) parts.push(`Xuất xứ: ${product.originCountry}`);
+  if (product.certifications) parts.push(`Chứng nhận/kiểm nghiệm: ${product.certifications}`);
+  if (product.price) parts.push(`Giá bán thường: ${product.price.toLocaleString('vi-VN')}đ`);
+  if (product.promoPrice) parts.push(`Giá ưu đãi hiện tại: ${product.promoPrice.toLocaleString('vi-VN')}đ`);
+  if (product.promotionOffer) parts.push(`Quà tặng/ưu đãi: ${product.promotionOffer}`);
+  if (product.safetyNotes) parts.push(`Lưu ý an toàn/khi nào cần hỏi bác sĩ (PHẢI nhắc nếu liên quan): ${product.safetyNotes}`);
   if (product.faqContent) parts.push(`FAQ: ${product.faqContent}`);
-  if (product.socialProof) parts.push(`Social proof: ${product.socialProof}`);
   if (product.keywords && product.keywords.length > 0) parts.push(`Từ khoá: ${product.keywords.join(', ')}`);
   return parts.join('\n');
 }
@@ -748,9 +964,12 @@ function buildTrendContext(videos: ITrendVideo[]): string {
 
 /**
  * Gộp ProductBrief + BrandProfile (đặc biệt doList/dontList/complianceNotes -
- * ràng buộc CỨNG, nhúng nguyên văn vào prompt) + 5 analysis + toàn bộ
- * topComments -> Gemini sinh đúng 5 {idea, script} theo 5 góc tiếp cận khác
- * nhau. Tạo Idea (status='draft') + Script (mỗi idea 1 script) tương ứng.
+ * ràng buộc CỨNG, nhúng nguyên văn vào prompt) + video đã phân tích + toàn bộ
+ * topComments + ĐÚNG job.selectedCombos (hook/pain point/DISC đã chọn ở bước
+ * awaiting_combo_selection, thay cho hệ "5 góc tiếp cận" cố định cũ) -> Gemini
+ * sinh đúng job.selectedCombos.length {idea, script}, mỗi cái bám sát 1 combo
+ * theo ĐÚNG thứ tự. Tạo Idea (status='draft') + Script (mỗi idea 1 script)
+ * tương ứng.
  */
 export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn): Promise<void> {
   await checkCancelled(job);
@@ -764,6 +983,10 @@ export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn):
     await setStatus(job, 'completed');
     emit('done', { jobId: job._id, resultIdeaIds: job.resultIdeaIds, resultScriptIds: job.resultScriptIds, cost: job.cost });
     return;
+  }
+
+  if (job.selectedCombos.length === 0) {
+    throw new Error(`Không có combo (hook/pain point/DISC) nào được chọn cho job ${jobId} - không thể sinh kịch bản`);
   }
 
   await pushProgress(job, 'generating_scripts', 'Tổng hợp dữ liệu từ sản phẩm + brand + video đã phân tích...', 0, emit);
@@ -782,6 +1005,11 @@ export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn):
 
   const brandProfile = job.brandProfileId ? await BrandProfile.findById(job.brandProfileId) : null;
   const template = await fetchPromptTemplate(job.userId.toString(), 'script_gen');
+  const knowledgeMaps = await loadComboKnowledgeMaps(job.userId.toString(), job.selectedCombos);
+  // Giai đoạn 6 Phase 6: kho "value comment" - giới hạn N bình luận mới nhất
+  // (xem MAX_VALUE_COMMENTS_FOR_PROMPT trong valueCommentService.ts) để không
+  // phình token cost khi kho lớn dần theo thời gian.
+  const valueComments = await loadRecentValueComments(job.userId.toString());
 
   const userPrompt = fillTemplate(template.userPromptTemplate, {
     productContext: buildProductContext(product),
@@ -791,9 +1019,13 @@ export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn):
     doList: brandProfile?.doList && brandProfile.doList.length > 0 ? brandProfile.doList.join('; ') : '',
     complianceNotes: brandProfile?.complianceNotes ?? '',
     trendContext: buildTrendContext(videos),
+    scriptCount: job.selectedCombos.length,
+    comboContext: buildComboContext(job.selectedCombos, knowledgeMaps),
+    valueCommentBank: formatValueCommentBankForPrompt(valueComments),
   });
 
-  let generatedScripts: ReturnType<typeof GeneratedScriptsSchema.parse>;
+  const expectedCount = job.selectedCombos.length;
+  let generatedScripts: GeneratedScript[];
 
   // Idempotent MỨC 1 (raw data): đã có rawGeneratedScripts lưu sẵn (Gemini đã
   // trả kết quả, chỉ chưa tạo hết Idea/Script thì bị chết) -> dùng lại
@@ -802,9 +1034,15 @@ export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn):
     console.log(
       `[Pipeline] Stage 5 (resume MỨC 1): đã có ${job.rawGeneratedScripts.length} kịch bản Gemini lưu sẵn - bỏ qua gọi lại Gemini.`
     );
-    generatedScripts = job.rawGeneratedScripts as unknown as typeof generatedScripts;
+    generatedScripts = job.rawGeneratedScripts as unknown as GeneratedScript[];
   } else {
-    await pushProgress(job, 'generating_scripts', 'Gọi Gemini sinh 5 ý tưởng + kịch bản...', 30, emit);
+    await pushProgress(
+      job,
+      'generating_scripts',
+      `Gọi Gemini sinh ${expectedCount} ý tưởng + kịch bản theo combo đã chọn...`,
+      30,
+      emit
+    );
 
     const { text, usage } = await callGeminiJson({
       label: 'Stage5 generateScripts',
@@ -818,7 +1056,25 @@ export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn):
     addGeminiUsage(job, usage);
 
     const parsed: unknown = JSON.parse(text);
-    generatedScripts = GeneratedScriptsSchema.parse(parsed);
+    let parsedScripts = GeneratedScriptsArraySchema.parse(parsed);
+
+    // Không còn minItems/maxItems ở responseSchema (xem docstring
+    // SCRIPT_GEN_RESPONSE_SCHEMA) - tự đối chiếu số lượng SAU khi parse: thừa
+    // thì cắt bớt (an toàn, không mất kịch bản nào trong số combo đã chọn),
+    // thiếu thì throw rõ ràng (không thể tự bịa thêm kịch bản cho combo còn
+    // lại - sẽ lệch chỉ số combo<->script).
+    if (parsedScripts.length > expectedCount) {
+      console.warn(
+        `[Pipeline] Stage 5: Gemini trả về ${parsedScripts.length} kịch bản, nhiều hơn ${expectedCount} combo đã chọn - cắt bớt, chỉ giữ ${expectedCount} kịch bản đầu (đúng thứ tự combo).`
+      );
+      parsedScripts = parsedScripts.slice(0, expectedCount);
+    }
+    if (parsedScripts.length < expectedCount) {
+      throw new Error(
+        `Gemini chỉ trả về ${parsedScripts.length}/${expectedCount} kịch bản - không đủ để khớp 1-1 với từng combo đã chọn. Thử lại job (Stage 5 sẽ gọi lại Gemini).`
+      );
+    }
+    generatedScripts = parsedScripts;
 
     // LƯU NGAY kết quả Gemini TRƯỚC KHI tạo Idea/Script - dữ liệu đã tốn
     // tiền Gemini để sinh ra (xem docstring rawGeneratedScripts trong ResearchJob.ts).
@@ -837,13 +1093,25 @@ export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn):
     }
 
     const gs = generatedScripts[i];
+    const combo = job.selectedCombos[i];
+    const hookEntry = combo.hookEntryId ? knowledgeMaps.hookMap.get(combo.hookEntryId) : undefined;
+    const painPointEntry = combo.painPointEntryId ? knowledgeMaps.painPointMap.get(combo.painPointEntryId) : undefined;
+
+    const comboSummary =
+      [
+        hookEntry ? `Hook: ${hookEntry.name}` : null,
+        painPointEntry ? `Pain point: ${painPointEntry.name}` : null,
+        combo.discCode ? `DISC: ${DISC_LABELS[combo.discCode]}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ') || 'AI tự do lựa chọn (không có combo cụ thể)';
 
     const idea = await withDbRetry(
       () =>
         Idea.create({
           userId: job.userId,
           title: gs.title,
-          description: `[Góc tiếp cận: ${gs.angle}] ${gs.targetPainPoint}`,
+          description: comboSummary,
           source: 'research-pipeline',
           priority: 'medium',
           status: 'draft',
@@ -872,8 +1140,11 @@ export async function runStage5GenerateScripts(job: IResearchJob, emit: EmitFn):
           callToAction: gs.cta,
           generatedBy: 'ai',
           status: 'draft',
-          angle: gs.angle,
-          targetPainPoint: gs.targetPainPoint,
+          hookEntryId: combo.hookEntryId ?? undefined,
+          hookName: hookEntry?.name,
+          painPointEntryId: combo.painPointEntryId ?? undefined,
+          targetPainPoint: painPointEntry?.description,
+          discCode: combo.discCode ?? undefined,
           body: gs.body,
           caption: gs.caption,
           hashtags: gs.hashtags,
@@ -986,6 +1257,14 @@ export async function runResearchPipeline(jobId: string, emit: EmitFn = defaultE
     if (stageIndexForStatus(job.status) <= 4) {
       await runStage4Analyzing(job, emit);
     }
+
+    if (job.status === 'awaiting_combo_selection') {
+      console.log(
+        `[Pipeline] Job ${jobId} DỪNG chờ người dùng chọn combo - gọi lại runResearchPipeline(jobId) sau khi đã set selectedCombos.`
+      );
+      return;
+    }
+
     if (stageIndexForStatus(job.status) <= 5) {
       await runStage5GenerateScripts(job, emit);
     }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import * as API from '@/lib/api';
 import * as Types from '@/lib/types';
@@ -13,7 +13,9 @@ import { ErrorState } from '@/components/common/ErrorState';
 import { Modal } from '@/components/common/Modal';
 import { Spinner } from '@/components/common/Spinner';
 import { IdeaForm } from '@/components/modules/ideation/IdeaForm';
-import { Plus, Trash2, Edit, Zap, Eye, Lightbulb } from 'lucide-react';
+import { Plus, Trash2, Edit, Zap, Eye, Lightbulb, ChevronLeft, ChevronRight } from 'lucide-react';
+
+const PAGE_SIZE = 20;
 
 const PRIORITY_LABEL: Record<Types.Idea['priority'], string> = {
   low: 'Thấp',
@@ -36,6 +38,9 @@ function isFromPipeline(idea: Types.Idea): boolean {
 export default function IdeationPage() {
   const [products, setProducts] = useState<Types.ProductBrief[]>([]);
   const [ideas, setIdeas] = useState<Types.Idea[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showIdeaForm, setShowIdeaForm] = useState(false);
@@ -59,12 +64,19 @@ export default function IdeationPage() {
     setLoading(true);
     setError(null);
     try {
-      const [p, i] = await Promise.all([
+      const [p, ideaResult] = await Promise.all([
         API.ProductAPI.list(),
-        API.IdeaAPI.list(),
+        API.IdeaAPI.listPaginated({
+          page,
+          limit: PAGE_SIZE,
+          source: sourceFilter === 'all' ? undefined : sourceFilter,
+        }),
       ]);
       setProducts(p);
-      setIdeas(i);
+      setIdeas(ideaResult.data);
+      setTotalPages(ideaResult.pagination.totalPages);
+      setTotal(ideaResult.pagination.total);
+      setSelectedIds(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Không tải được dữ liệu');
     } finally {
@@ -72,30 +84,29 @@ export default function IdeationPage() {
     }
   };
 
+  // Đổi bộ lọc nguồn -> luôn quay về trang 1, tránh kẹt ở trang rỗng.
+  useEffect(() => {
+    setPage(1);
+  }, [sourceFilter]);
+
   useEffect(() => {
     loadData();
-  }, []);
-
-  const filteredIdeas = useMemo(() => {
-    return ideas.filter((idea) => {
-      if (sourceFilter === 'manual') return !isFromPipeline(idea);
-      if (sourceFilter === 'pipeline') return isFromPipeline(idea);
-      return true;
-    });
-  }, [ideas, sourceFilter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, sourceFilter]);
 
   const handleSaveIdea = async (data: Omit<Types.Idea, 'id'>) => {
     try {
       if (editingIdea) {
-        const updated = await API.IdeaAPI.update(editingIdea.id, data);
-        setIdeas(ideas.map(i => i.id === updated.id ? updated : i));
+        await API.IdeaAPI.update(editingIdea.id, data);
         setEditingIdea(undefined);
       } else {
-        const created = await API.IdeaAPI.create(data);
-        setIdeas([...ideas, created]);
+        await API.IdeaAPI.create(data);
       }
       setShowIdeaForm(false);
       toast.success(editingIdea ? 'Đã cập nhật ý tưởng' : 'Đã tạo ý tưởng');
+      // Tạo/sửa đều đổi tổng số hoặc nội dung trang hiện tại - tải lại cho
+      // chắc thay vì tự vá state cục bộ (đơn giản hơn khi đã có phân trang).
+      await loadData();
     } catch (error) {
       toast.error('Lưu ý tưởng thất bại');
     }
@@ -106,14 +117,9 @@ export default function IdeationPage() {
     setDeleting(true);
     try {
       await API.IdeaAPI.delete(deleteTarget.id);
-      setIdeas(ideas.filter(i => i.id !== deleteTarget.id));
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(deleteTarget.id);
-        return next;
-      });
       toast.success('Đã xoá ý tưởng');
       setDeleteTarget(null);
+      await loadData();
     } catch (error) {
       toast.error('Xoá ý tưởng thất bại');
     } finally {
@@ -131,11 +137,16 @@ export default function IdeationPage() {
     try {
       const generatedIdeas = await API.IdeaAPI.generate(selectedProduct, 5);
       if (Array.isArray(generatedIdeas)) {
-        setIdeas([...ideas, ...generatedIdeas]);
         toast.success(`Đã sinh ${generatedIdeas.length} ý tưởng bằng Gemini AI`);
       }
       setShowGenerateModal(false);
       setSelectedProduct('');
+      // Ý tưởng mới nhất luôn ở đầu (sort createdAt:-1) - về trang 1 để thấy ngay.
+      if (page === 1) {
+        await loadData();
+      } else {
+        setPage(1);
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Lỗi mạng';
       toast.error(`Sinh ý tưởng thất bại: ${errorMessage}`);
@@ -158,9 +169,8 @@ export default function IdeationPage() {
     setApplyingBulk(true);
     try {
       await API.IdeaAPI.bulkUpdate(Array.from(selectedIds), { status: bulkStatus });
-      setIdeas(ideas.map((i) => (selectedIds.has(i.id) ? { ...i, status: bulkStatus } : i)));
       toast.success(`Đã đổi trạng thái ${selectedIds.size} ý tưởng`);
-      setSelectedIds(new Set());
+      await loadData();
     } catch (error) {
       toast.error('Đổi trạng thái hàng loạt thất bại');
     } finally {
@@ -247,18 +257,18 @@ export default function IdeationPage() {
             <ErrorState message={error} onRetry={loadData} />
           </CardContent>
         </Card>
-      ) : filteredIdeas.length === 0 ? (
+      ) : ideas.length === 0 ? (
         <Card>
           <CardContent>
             <EmptyState
-              title={ideas.length === 0 ? 'Chưa có ý tưởng nào' : 'Không có ý tưởng nào khớp bộ lọc'}
-              description={ideas.length === 0 ? 'Tạo mới hoặc sinh ý tưởng từ sản phẩm.' : undefined}
+              title={total === 0 ? 'Chưa có ý tưởng nào' : 'Không có ý tưởng nào khớp bộ lọc'}
+              description={total === 0 ? 'Tạo mới hoặc sinh ý tưởng từ sản phẩm.' : undefined}
             />
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-3">
-          {filteredIdeas.map(idea => (
+          {ideas.map(idea => (
             <Card key={idea.id}>
               <CardHeader>
                 <div className="flex items-start gap-3">
@@ -307,7 +317,24 @@ export default function IdeationPage() {
         </div>
       )}
 
+      {!loading && !error && totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3">
+          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+            <ChevronLeft size={16} className="mr-1" /> Trước
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Trang {page} / {totalPages} ({total} ý tưởng)
+          </span>
+          <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+            Sau <ChevronRight size={16} className="ml-1" />
+          </Button>
+        </div>
+      )}
+
       <IdeaForm
+        // Cùng lý do như ProductBriefForm - key theo id ép remount để
+        // useForm() nạp lại defaultValues khi đổi ý tưởng đang sửa.
+        key={editingIdea?.id ?? 'new'}
         isOpen={showIdeaForm}
         onClose={() => {
           setShowIdeaForm(false);

@@ -169,6 +169,39 @@ export function estimateApifyCost(itemCount: number, withVideoDownload: boolean)
 }
 
 /**
+ * Quy đổi số tháng (VD 6/12/24/36, chọn ở lúc tạo job) thành ngày cutoff -
+ * video đăng TRƯỚC ngày này bị coi là quá cũ. null/0/âm = không giới hạn (trả
+ * null, filterByMinCreateTime() bên dưới hiểu null là "giữ nguyên tất cả").
+ * Hàm THUẦN - nhận `now` làm tham số để test không phụ thuộc đồng hồ thật.
+ */
+export function computeMaxAgeCutoffDate(maxAgeMonths: number | null | undefined, now: Date = new Date()): Date | null {
+  if (!maxAgeMonths || maxAgeMonths <= 0) return null;
+  const cutoff = new Date(now);
+  cutoff.setMonth(cutoff.getMonth() - maxAgeMonths);
+  return cutoff;
+}
+
+/**
+ * Loại video có ngày đăng (createTimeISO) cũ hơn cutoffDate, HOẶC thiếu hẳn/
+ * không parse được createTimeISO - quyết định đã chốt với người dùng: thiếu
+ * ngày đăng = LOẠI (ưu tiên an toàn cho mục tiêu "chỉ phân tích trend mới"
+ * hơn là giữ lại video không xác minh được). cutoffDate=null -> giữ nguyên
+ * tất cả (không lọc). Hàm THUẦN, chạy TRƯỚC dedupeSortAndTakeTop (xem
+ * discoverTrendVideos) - video cũ bị loại NGAY ở PASS 1, không bao giờ tốn
+ * chi phí PASS 2 (tải) hay Gemini (phân tích).
+ */
+export function filterByMinCreateTime(items: ApifyTikTokResult[], cutoffDate: Date | null): ApifyTikTokResult[] {
+  if (!cutoffDate) return items;
+  return items.filter((item) => {
+    const raw = item?.createTimeISO;
+    if (!raw) return false;
+    const createdAt = new Date(raw);
+    if (Number.isNaN(createdAt.getTime())) return false;
+    return createdAt >= cutoffDate;
+  });
+}
+
+/**
  * Bỏ trùng theo videoId, loại slideshow, sort theo playCount giảm dần, lấy
  * top N. Hàm THUẦN (không gọi mạng) - dễ test độc lập.
  */
@@ -233,7 +266,7 @@ export class TikTokService {
    */
   async discoverTrendVideos(
     hashtags: string[],
-    opts: { topN?: number; region?: string; discoveryLimit?: number } = {}
+    opts: { topN?: number; region?: string; discoveryLimit?: number; maxAgeMonths?: number | null } = {}
   ): Promise<{ videos: ApifyTikTokResult[]; apifyRunId?: string; totalFetched: number }> {
     if (!this.token) {
       throw new Error('FATAL: APIFY_API_TOKEN is missing - không thể tìm video theo hashtag');
@@ -272,12 +305,24 @@ export class TikTokService {
     );
     const elapsedMs = Date.now() - t0;
 
-    const topVideos = dedupeSortAndTakeTop(outcome.items, topN);
+    // Lọc video quá cũ NGAY sau khi có kết quả thô, TRƯỚC dedupeSortAndTakeTop -
+    // video cũ hơn ngưỡng (hoặc thiếu ngày đăng) không bao giờ lọt vào top N,
+    // nên không bao giờ tốn chi phí PASS 2/Gemini cho video cũ.
+    const cutoffDate = computeMaxAgeCutoffDate(opts.maxAgeMonths);
+    const freshItems = filterByMinCreateTime(outcome.items, cutoffDate);
+    if (cutoffDate) {
+      console.log(
+        `[TikTokService] Lọc tuổi video: ngưỡng=${cutoffDate.toISOString()} -> giữ ${freshItems.length}/${outcome.items.length} item ` +
+          `(loại ${outcome.items.length - freshItems.length} video cũ hơn ngưỡng hoặc thiếu ngày đăng)`
+      );
+    }
+
+    const topVideos = dedupeSortAndTakeTop(freshItems, topN);
 
     console.log(
       `[TikTokService] PASS 1 (discover): hashtags=[${normalizedHashtags.join(', ')}] region=${region} ` +
         `resultsPerPage=${discoveryLimit} apifyRunId=${outcome.runId} thời gian=${elapsedMs}ms -> ` +
-        `${outcome.items.length} item thô, giữ top ${topVideos.length} sau bỏ trùng/lọc slideshow/sort`
+        `${outcome.items.length} item thô, giữ top ${topVideos.length} sau lọc tuổi/bỏ trùng/lọc slideshow/sort`
     );
 
     return { videos: topVideos, apifyRunId: outcome.runId, totalFetched: outcome.items.length };
@@ -382,7 +427,7 @@ export class TikTokService {
    */
   async searchTrendVideosByHashtags(
     hashtags: string[],
-    opts: { topN?: number; region?: string; maxItemsPerHashtag?: number } = {}
+    opts: { topN?: number; region?: string; maxItemsPerHashtag?: number; maxAgeMonths?: number | null } = {}
   ): Promise<{ videos: ApifyTikTokResult[]; apifyRunId?: string; totalFetched: number; apifyActualUsd: number }> {
     const region = opts.region ?? 'VN';
 
@@ -390,6 +435,7 @@ export class TikTokService {
       topN: opts.topN,
       region,
       discoveryLimit: opts.maxItemsPerHashtag,
+      maxAgeMonths: opts.maxAgeMonths,
     });
 
     if (discovery.videos.length === 0) {

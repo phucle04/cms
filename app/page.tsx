@@ -8,15 +8,10 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { ErrorState } from '@/components/common/ErrorState';
 import { EmptyState } from '@/components/common/EmptyState';
-import { formatRelativeTime, formatDateTime } from '@/lib/format';
+import { formatRelativeTime, formatDateTime, productName } from '@/lib/format';
 import * as API from '@/lib/api';
 import * as Types from '@/lib/types';
 import { Package, Lightbulb, Search, FileText, ArrowRight, History } from 'lucide-react';
-
-function productName(productId: Types.ResearchJob['productId']): string {
-  if (typeof productId === 'string') return productId;
-  return productId.name;
-}
 
 const STEPS = [
   { label: 'Sản phẩm', href: '/products', icon: Package, desc: 'Tạo hồ sơ sản phẩm' },

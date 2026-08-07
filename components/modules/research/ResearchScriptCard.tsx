@@ -76,7 +76,8 @@ export function ResearchScriptCard({ script, index }: ResearchScriptCardProps) {
             Kịch bản {index + 1}: {script.title}
           </CardTitle>
           <div className="flex items-center gap-2 flex-wrap mt-2">
-            {script.angle && <Badge variant="secondary">{script.angle}</Badge>}
+            {script.hookName && <Badge variant="secondary">Hook: {script.hookName}</Badge>}
+            {script.discCode && <Badge variant="secondary">{Types.DISC_LABELS[script.discCode]}</Badge>}
             {script.confidence && <Badge variant="outline">{CONFIDENCE_LABEL[script.confidence] ?? script.confidence}</Badge>}
             {status === 'approved' && <Badge>Đã lưu vào Kịch bản</Badge>}
           </div>

@@ -1,3 +1,21 @@
+import type { ResearchJob } from './types';
+
+// ResearchJob.productId có thể là: string (chưa populate), object ProductBrief
+// (đã populate), hoặc null (ProductBrief gốc đã bị xoá - populate trả về null).
+// Dùng chung ở mọi nơi hiển thị tên sản phẩm của 1 job để tránh lặp lại bug
+// "productId.name" crash khi null (đã xảy ra ở dashboard + trang lịch sử +
+// trang chi tiết job).
+export function productName(productId: ResearchJob['productId']): string {
+  if (!productId) return '(sản phẩm đã bị xoá)';
+  if (typeof productId === 'string') return productId;
+  return productId.name;
+}
+
+export function productLinkId(productId: ResearchJob['productId']): string | null {
+  if (!productId) return null;
+  return typeof productId === 'string' ? productId : productId.id;
+}
+
 // Định dạng số kiểu Việt Nam - gọn cho số lớn: 3.100.000 -> "3,1 triệu"
 export function formatNumber(value: number): string {
   const abs = Math.abs(value);

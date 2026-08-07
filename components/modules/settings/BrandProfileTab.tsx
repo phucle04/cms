@@ -29,7 +29,6 @@ interface FormState {
   ageRange: string;
   gender: string;
   roles: string;
-  painPoints: string;
   doList: string;
   dontList: string;
   complianceNotes: string;
@@ -46,7 +45,6 @@ const EMPTY_FORM: FormState = {
   ageRange: '',
   gender: '',
   roles: '',
-  painPoints: '',
   doList: '',
   dontList: '',
   complianceNotes: '',
@@ -64,7 +62,6 @@ function profileToForm(p: Types.BrandProfile): FormState {
     ageRange: p.targetAudience?.ageRange ?? '',
     gender: p.targetAudience?.gender ?? '',
     roles: arrayToLines(p.targetAudience?.roles),
-    painPoints: arrayToLines(p.targetAudience?.painPoints),
     doList: arrayToLines(p.doList),
     dontList: arrayToLines(p.dontList),
     complianceNotes: p.complianceNotes ?? '',
@@ -114,7 +111,6 @@ export function BrandProfileTab() {
           ageRange: form.ageRange,
           gender: form.gender,
           roles: linesToArray(form.roles),
-          painPoints: linesToArray(form.painPoints),
         },
         doList: linesToArray(form.doList),
         dontList: linesToArray(form.dontList),
@@ -207,13 +203,6 @@ export function BrandProfileTab() {
             value={form.roles}
             onChange={(e) => setForm({ ...form, roles: e.target.value })}
           />
-          <FormTextarea
-            label="Nỗi đau khách hàng (mỗi dòng 1 mục)"
-            placeholder={'Con biếng ăn\nCon táo bón'}
-            value={form.painPoints}
-            onChange={(e) => setForm({ ...form, painPoints: e.target.value })}
-          />
-
           <FormTextarea
             label="Nên làm - Do List (mỗi dòng 1 mục)"
             value={form.doList}

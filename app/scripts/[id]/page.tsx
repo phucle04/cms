@@ -119,7 +119,8 @@ export default function ScriptDetailPage() {
           <div>
             <CardTitle className="text-xl">{script.title}</CardTitle>
             <div className="flex items-center gap-2 flex-wrap mt-2">
-              {script.angle && <Badge variant="secondary">{script.angle}</Badge>}
+              {script.hookName && <Badge variant="secondary">Hook: {script.hookName}</Badge>}
+              {script.discCode && <Badge variant="secondary">{Types.DISC_LABELS[script.discCode]}</Badge>}
               {script.confidence && <Badge variant="outline">{CONFIDENCE_LABEL[script.confidence] ?? script.confidence}</Badge>}
               <StatusBadge domain="script" value={script.status} />
               {ideaTitle(script.ideaId) && <Badge variant="outline">Ý tưởng: {ideaTitle(script.ideaId)}</Badge>}

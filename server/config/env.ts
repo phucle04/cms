@@ -84,3 +84,14 @@ export const DAILY_COST_CAP_USD = Number(process.env.DAILY_COST_CAP_USD) || 5;
 
 /** Số research job đang chạy đồng thời tối đa cho 1 user (chưa completed/failed). */
 export const MAX_CONCURRENT_RESEARCH_JOBS = Number(process.env.MAX_CONCURRENT_RESEARCH_JOBS) || 2;
+
+/**
+ * Giai đoạn 6 Phase 3: cho người dùng tự chọn số video sẽ quét (PASS 2 - tải
+ * THẬT + phân tích Gemini, phần tốn tiền nhất) và số kịch bản sẽ sinh mỗi
+ * job, thay vì cố định topN=5 như trước. Giới hạn tối đa để tránh bấm nhầm
+ * gây tốn phí Apify/Gemini lớn ngoài ý muốn.
+ */
+export const DEFAULT_VIDEO_SCAN_COUNT = Number(process.env.DEFAULT_VIDEO_SCAN_COUNT) || 5;
+export const MAX_VIDEO_SCAN_COUNT = Number(process.env.MAX_VIDEO_SCAN_COUNT) || 50;
+export const DEFAULT_SCRIPT_COUNT = Number(process.env.DEFAULT_SCRIPT_COUNT) || 5;
+export const MAX_SCRIPT_COUNT = Number(process.env.MAX_SCRIPT_COUNT) || 50;

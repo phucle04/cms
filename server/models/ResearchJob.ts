@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
+import { DEFAULT_VIDEO_SCAN_COUNT, DEFAULT_SCRIPT_COUNT } from '../config/env';
 
 export type ResearchJobStatus =
   | 'queued'
@@ -7,6 +8,7 @@ export type ResearchJobStatus =
   | 'scraping'
   | 'downloading'
   | 'analyzing'
+  | 'awaiting_combo_selection'
   | 'generating_scripts'
   | 'completed'
   | 'failed'
@@ -19,6 +21,7 @@ const RESEARCH_JOB_STATUSES: ResearchJobStatus[] = [
   'scraping',
   'downloading',
   'analyzing',
+  'awaiting_combo_selection',
   'generating_scripts',
   'completed',
   'failed',
@@ -42,6 +45,29 @@ export interface IResearchJobError {
   stage: string;
   message: string;
   at: Date;
+}
+
+// Giai đoạn 6 Phase 3: thay cho "5 góc tiếp cận" cố định trước đây - mỗi kịch
+// bản giờ gắn với ĐÚNG 1 bộ (hook, pain point, DISC) riêng, chọn từ kho tri
+// thức (xem server/models/KnowledgeEntry.ts). null = không chỉ định cho slot
+// đó (AI tự do quyết định phần đó khi sinh kịch bản).
+export interface IResearchJobCombo {
+  hookEntryId: string | null;
+  painPointEntryId: string | null;
+  discCode: 'D' | 'I' | 'S' | 'C' | null;
+}
+
+export interface IResearchJobTrendStatEntry {
+  entryId: string;
+  name: string;
+  count: number;
+}
+
+export interface IResearchJobTrendStats {
+  topHooks: IResearchJobTrendStatEntry[];
+  topPainPoints: IResearchJobTrendStatEntry[];
+  discDistribution: { D: number; I: number; S: number; C: number };
+  videosClassified: number;
 }
 
 /**
@@ -78,6 +104,24 @@ export interface IResearchJob extends Document {
   autoSelectTop3: boolean;
   suggestedHashtags: IResearchJobSuggestedHashtag[];
   selectedHashtags: string[];
+  // Giai đoạn 6 Phase 3: số video sẽ tải THẬT+phân tích (PASS 2, phần tốn
+  // tiền nhất - thay cho hardcode topN=5 trước đây) và số kịch bản sẽ sinh.
+  videoScanCount: number;
+  scriptCount: number;
+  // Lọc video theo tuổi (tính bằng THÁNG, VD 6/12/24/36) - video có ngày đăng
+  // (createTimeISO) cũ hơn ngưỡng này, HOẶC thiếu hẳn createTimeISO, bị loại
+  // NGAY ở PASS 1 (discoverTrendVideos trong tiktokService.ts), trước khi
+  // chọn top N để tải/phân tích - xem docstring filterByMinCreateTime().
+  // null/undefined = không giới hạn (giữ hành vi cũ).
+  maxVideoAgeMonths?: number | null;
+  // Thống kê xu hướng tính từ các video vừa phân tích xong (top hook/pain
+  // point theo tần suất + % phân bố DISC) - tính 1 LẦN khi vừa xong Stage 4,
+  // dùng để gợi ý suggestedCombos và hiển thị cho người dùng tham khảo.
+  trendStats?: IResearchJobTrendStats;
+  suggestedCombos: IResearchJobCombo[];
+  // Combo THẬT người dùng xác nhận (giữ nguyên gợi ý hoặc tự chọn lại từ toàn
+  // bộ kho) - Stage 5 dùng đúng danh sách này để sinh kịch bản (Phase 4).
+  selectedCombos: IResearchJobCombo[];
   progress: IResearchJobProgressEntry[];
   apifyRunId?: string;
   apifyKvStoreId?: string;
@@ -122,6 +166,29 @@ const researchJobSchema = new Schema<IResearchJob>(
       },
     ],
     selectedHashtags: [String],
+    videoScanCount: { type: Number, default: DEFAULT_VIDEO_SCAN_COUNT },
+    scriptCount: { type: Number, default: DEFAULT_SCRIPT_COUNT },
+    maxVideoAgeMonths: { type: Number, default: null },
+    trendStats: {
+      topHooks: [{ entryId: String, name: String, count: Number }],
+      topPainPoints: [{ entryId: String, name: String, count: Number }],
+      discDistribution: { D: Number, I: Number, S: Number, C: Number },
+      videosClassified: Number,
+    },
+    suggestedCombos: [
+      {
+        hookEntryId: { type: String, default: null },
+        painPointEntryId: { type: String, default: null },
+        discCode: { type: String, enum: ['D', 'I', 'S', 'C', null], default: null },
+      },
+    ],
+    selectedCombos: [
+      {
+        hookEntryId: { type: String, default: null },
+        painPointEntryId: { type: String, default: null },
+        discCode: { type: String, enum: ['D', 'I', 'S', 'C', null], default: null },
+      },
+    ],
     progress: [
       {
         stage: { type: String, required: true },

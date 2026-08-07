@@ -22,7 +22,15 @@ const KEY_LABEL: Record<Types.PromptTemplateKey, string> = {
 // gợi ý hiển thị cho người dùng, không phải logic AI.
 const PLACEHOLDER_HINTS: Record<Types.PromptTemplateKey, string[]> = {
   hashtag: ['{{productName}}', '{{productCategory}}', '{{brandName}}', '{{usp}}', '{{painPoints}}', '{{targetAudience}}'],
-  video_analysis: ['{{caption}}', '{{playCount}}', '{{diggCount}}', '{{transcript}}'],
+  video_analysis: [
+    '{{caption}}',
+    '{{playCount}}',
+    '{{diggCount}}',
+    '{{transcript}}',
+    '{{topComments}}',
+    '{{hookLibrary}}',
+    '{{painPointLibrary}}',
+  ],
   script_gen: [
     '{{productContext}}',
     '{{brandName}}',
@@ -31,6 +39,9 @@ const PLACEHOLDER_HINTS: Record<Types.PromptTemplateKey, string[]> = {
     '{{doList}}',
     '{{complianceNotes}}',
     '{{trendContext}}',
+    '{{scriptCount}}',
+    '{{comboContext}}',
+    '{{valueCommentBank}}',
   ],
 };
 

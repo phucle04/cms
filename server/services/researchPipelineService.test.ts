@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import ResearchJob from '../models/ResearchJob';
 import TrendVideo from '../models/TrendVideo';
 import PromptTemplate from '../models/PromptTemplate';
+import KnowledgeEntry from '../models/KnowledgeEntry';
 import { TikTokService } from '../services/tiktokService';
 import {
   runStage1GenerateHashtags,
@@ -15,7 +16,7 @@ import {
   PipelineCancelledError,
   type EmitFn,
 } from './researchPipelineService';
-import { HashtagSuggestionsSchema, GeneratedScriptsSchema } from '../types/pipeline';
+import { HashtagSuggestionsSchema, GeneratedScriptsArraySchema } from '../types/pipeline';
 import type { analyzeVideo, analyzeFromTextOnly } from './geminiVideoService';
 import type { IResearchJob } from '../models/ResearchJob';
 import type { ITrendVideo } from '../models/TrendVideo';
@@ -46,6 +47,10 @@ function makeFakeJob(overrides: Partial<IResearchJob> = {}): IResearchJob {
     autoSelectTop3: true,
     suggestedHashtags: [],
     selectedHashtags: ['abc'],
+    videoScanCount: 5,
+    scriptCount: 5,
+    suggestedCombos: [],
+    selectedCombos: [],
     progress: [],
     resultIdeaIds: [],
     resultScriptIds: [],
@@ -96,6 +101,13 @@ function fakePromptTemplateFindOneQuery(template: unknown) {
 // checkCancelled() trong researchPipelineService.ts gọi ResearchJob.exists()
 // thật ở đầu mỗi Stage - mock trả về null (chưa bị yêu cầu dừng) cho MỌI
 // test không tự test tính năng dừng job, tránh lỗi "not connected" thật.
+// runStage4Analyzing (Giai đoạn 6, Phase 2) LUÔN gọi loadApprovedKnowledgeLibrary
+// (KnowledgeEntry.find) 1 lần ở đầu, kể cả khi mọi video đều resume/skip -
+// mock trả về kho rỗng cho MỌI test không tự test tính năng khớp kho.
+function mockEmptyKnowledgeLibrary() {
+  return mock.method(KnowledgeEntry, 'find', async () => []);
+}
+
 function mockNotCancelled() {
   return mock.method(ResearchJob, 'exists', async () => null);
 }
@@ -200,6 +212,18 @@ function fakeAnalysisResult() {
       viralHypothesis: '',
       cta: '',
       transcript: '',
+      knowledgeMatch: {
+        hookEntryId: '',
+        hookNewName: '',
+        hookNewDescription: '',
+        hookNewExample: '',
+        painPointEntryId: '',
+        painPointNewName: '',
+        painPointNewDescription: '',
+        painPointNewExample: '',
+        discCode: '',
+      },
+      valueComments: [],
       analysisConfidence: 'low' as const,
     },
     usage: { model: 'test', inputTokens: 10, outputTokens: 5, estimatedUsd: 0.0001 },
@@ -214,6 +238,7 @@ test('runStage4Analyzing: job FAIL khi < MIN_VIDEOS_WITH_ANALYSIS video phân t�
     fakePromptTemplateFindOneQuery({ systemPrompt: 'sys', userPromptTemplate: 'tpl', aiModel: '', temperature: 0.5 })
   );
   const cancelSpy = mockNotCancelled();
+  const knowledgeSpy = mockEmptyKnowledgeLibrary();
 
   let callIndex = 0;
   // Inject trực tiếp qua tham số deps của runStage4Analyzing (không mock
@@ -241,6 +266,7 @@ test('runStage4Analyzing: job FAIL khi < MIN_VIDEOS_WITH_ANALYSIS video phân t�
     findSpy.mock.restore();
     templateSpy.mock.restore();
     cancelSpy.mock.restore();
+    knowledgeSpy.mock.restore();
   }
 });
 
@@ -252,6 +278,7 @@ test('runStage4Analyzing: KHÔNG fail khi 3/5 video là text_only lỗi nhưng �
     fakePromptTemplateFindOneQuery({ systemPrompt: 'sys', userPromptTemplate: 'tpl', aiModel: '', temperature: 0.5 })
   );
   const cancelSpy = mockNotCancelled();
+  const knowledgeSpy = mockEmptyKnowledgeLibrary();
 
   let callIndex = 0;
   const analyzeFromTextOnlyFn = (async () => {
@@ -274,6 +301,7 @@ test('runStage4Analyzing: KHÔNG fail khi 3/5 video là text_only lỗi nhưng �
     findSpy.mock.restore();
     templateSpy.mock.restore();
     cancelSpy.mock.restore();
+    knowledgeSpy.mock.restore();
   }
 });
 
@@ -319,6 +347,7 @@ test('runStage4Analyzing (G6#7): resume - video đã analyzedAt từ trước KH
     fakePromptTemplateFindOneQuery({ systemPrompt: 'sys', userPromptTemplate: 'tpl', aiModel: '', temperature: 0.5 })
   );
   const cancelSpy = mockNotCancelled();
+  const knowledgeSpy = mockEmptyKnowledgeLibrary();
 
   let analyzeFromTextOnlyCallCount = 0;
   const analyzeFromTextOnlyFn = (async () => {
@@ -343,6 +372,7 @@ test('runStage4Analyzing (G6#7): resume - video đã analyzedAt từ trước KH
     findSpy.mock.restore();
     templateSpy.mock.restore();
     cancelSpy.mock.restore();
+    knowledgeSpy.mock.restore();
   }
 });
 
@@ -422,12 +452,9 @@ test('runStage2Scraping: cancelRequested=true giữa vòng lặp lưu video -> d
   }
 });
 
-test('GeneratedScriptsSchema (G6#4): Gemini trả thiếu/sai số phần tử -> zod throw rõ ràng', () => {
-  // Đúng cấu trúc từng phần tử nhưng chỉ có 3/5 kịch bản (schema yêu cầu đúng 5)
+test('GeneratedScriptsArraySchema (G6#4 Phase 4, sau khi bỏ minItems/maxItems): validate đúng shape từng phần tử, KHÔNG ràng buộc số lượng - số lượng được đối chiếu bằng code trong runStage5GenerateScripts, không phải ở schema (xem docstring GeneratedScriptsArraySchema)', () => {
   const oneScript = {
     title: 't',
-    angle: 'a',
-    targetPainPoint: 'p',
     hook: 'h',
     body: [],
     cta: 'c',
@@ -437,8 +464,16 @@ test('GeneratedScriptsSchema (G6#4): Gemini trả thiếu/sai số phần tử -
     learnedFrom: [],
     confidence: 'high' as const,
   };
-  assert.throws(() => GeneratedScriptsSchema.parse([oneScript, oneScript, oneScript]));
+
+  // Bất kỳ số lượng nào cũng parse được (kể cả rỗng, kể cả nhiều/ít hơn số
+  // combo đã chọn) - Stage 5 mới là nơi cắt bớt/throw dựa trên
+  // job.selectedCombos.length.
+  assert.equal(GeneratedScriptsArraySchema.parse([oneScript, oneScript, oneScript]).length, 3);
+  assert.equal(GeneratedScriptsArraySchema.parse([]).length, 0);
+
+  // Vẫn validate đúng shape từng phần tử - thiếu field bắt buộc thì throw.
+  assert.throws(() => GeneratedScriptsArraySchema.parse([{ title: 't' }]));
 
   // Không phải JSON array hợp lệ theo schema (object rỗng)
-  assert.throws(() => GeneratedScriptsSchema.parse({}));
+  assert.throws(() => GeneratedScriptsArraySchema.parse({}));
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { Plus, Trash2, Edit, Sparkles, Package } from 'lucide-react';
@@ -24,6 +24,13 @@ export default function ProductsPage() {
   const [editingProduct, setEditingProduct] = useState<Types.ProductBrief | undefined>();
   const [deleteTarget, setDeleteTarget] = useState<Types.ProductBrief | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const filteredProducts = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return products;
+    return products.filter((p) => p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q));
+  }, [products, search]);
 
   const loadData = async () => {
     setLoading(true);
@@ -88,6 +95,16 @@ export default function ProductsPage() {
         }
       />
 
+      {!loading && !error && products.length > 0 && (
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Tìm theo tên hoặc ngành hàng..."
+          className="w-full max-w-sm px-3 py-2 border border-input rounded-lg bg-background text-foreground text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+      )}
+
       {loading ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -115,9 +132,15 @@ export default function ProductsPage() {
             />
           </CardContent>
         </Card>
+      ) : filteredProducts.length === 0 ? (
+        <Card>
+          <CardContent>
+            <EmptyState title="Không tìm thấy sản phẩm nào khớp tìm kiếm" />
+          </CardContent>
+        </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4">
-          {products.map(product => (
+          {filteredProducts.map(product => (
             <Card key={product.id}>
               <CardHeader>
                 <div className="flex items-start justify-between">
@@ -164,6 +187,12 @@ export default function ProductsPage() {
       )}
 
       <ProductBriefForm
+        // key thay đổi theo sản phẩm đang sửa - buộc component remount để
+        // useForm() bên trong nạp lại defaultValues MỚI. Không có key này,
+        // ProductBriefForm không bao giờ unmount (Modal chỉ ẩn/hiện qua CSS),
+        // nên defaultValues bị "đóng băng" ở lần mount đầu tiên - bấm "Sửa"
+        // sản phẩm khác vẫn hiện data cũ/rỗng (bug thật đã gặp).
+        key={editingProduct?.id ?? 'new'}
         isOpen={showProductForm}
         onClose={() => {
           setShowProductForm(false);

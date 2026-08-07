@@ -4,7 +4,6 @@ export interface IBrandProfileTargetAudience {
   ageRange: string;
   gender: string;
   roles: string[];
-  painPoints: string[];
 }
 
 export interface IBrandProfileStoreInfo {
@@ -40,7 +39,6 @@ const brandProfileSchema = new Schema<IBrandProfile>(
       ageRange: String,
       gender: String,
       roles: [String],
-      painPoints: [String],
     },
     toneOfVoice: { type: String, required: true },
     // dontList là ràng buộc CỨNG (pháp lý/compliance), không phải gợi ý -

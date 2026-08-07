@@ -8,13 +8,41 @@ import ProductBrief from '../models/ProductBrief';
 // AIService initialized with Gemini from env vars
 const aiService = new AIService();
 
+// GET /api/ideas?status=&priority=&productId=&source=manual|pipeline&page=&limit=
+// `page`/`limit` TUỲ CHỌN - không truyền thì trả TOÀN BỘ (tương thích ngược
+// cho nơi cần load hết, VD đếm tổng số ở dashboard) - cùng pattern với
+// scriptController.getScripts. `source=pipeline` lọc ý tưởng sinh từ research
+// pipeline (source==='research-pipeline'), `source=manual` lọc phần còn lại.
 export const getIdeas = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const { status, priority, productId } = req.query;
+  const { status, priority, productId, source } = req.query;
   const filter: any = { userId: req.userId };
 
   if (status) filter.status = status;
   if (priority) filter.priority = priority;
   if (productId) filter.productId = productId;
+  if (source === 'pipeline') filter.source = 'research-pipeline';
+  else if (source === 'manual') filter.source = { $ne: 'research-pipeline' };
+
+  if (req.query.page || req.query.limit) {
+    const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? '20'), 10) || 20));
+
+    const [ideas, total] = await Promise.all([
+      Idea.find(filter)
+        .populate('productId')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      Idea.countDocuments(filter),
+    ]);
+
+    res.json({
+      success: true,
+      data: ideas,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+    return;
+  }
 
   const ideas = await Idea.find(filter)
     .populate('productId')

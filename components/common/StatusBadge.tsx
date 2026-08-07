@@ -24,6 +24,7 @@ const RESEARCH_JOB_CONFIG: Record<Types.ResearchJobStatus, StatusConfigEntry> = 
   scraping: { label: 'Đang cào TikTok', tone: 'info' },
   downloading: { label: 'Đang tải video', tone: 'info' },
   analyzing: { label: 'Đang phân tích', tone: 'info' },
+  awaiting_combo_selection: { label: 'Chờ chọn combo', tone: 'warning' },
   generating_scripts: { label: 'Đang sinh kịch bản', tone: 'info' },
   completed: { label: 'Hoàn tất', tone: 'success' },
   failed: { label: 'Thất bại', tone: 'danger' },
@@ -69,6 +70,11 @@ const TREND_VIDEO_DOWNLOAD_CONFIG: Record<Types.TrendVideoDownloadStatus, Status
   failed: { label: 'Tải thất bại', tone: 'danger' },
 };
 
+const KNOWLEDGE_STATUS_CONFIG: Record<Types.KnowledgeStatus, StatusConfigEntry> = {
+  approved: { label: 'Đã duyệt', tone: 'success' },
+  pending: { label: 'Chờ duyệt', tone: 'warning' },
+};
+
 const CONFIG_BY_DOMAIN = {
   researchJob: RESEARCH_JOB_CONFIG,
   product: PRODUCT_CONFIG,
@@ -77,6 +83,7 @@ const CONFIG_BY_DOMAIN = {
   ideaPriority: IDEA_PRIORITY_CONFIG,
   script: SCRIPT_CONFIG,
   trendVideoDownload: TREND_VIDEO_DOWNLOAD_CONFIG,
+  knowledgeStatus: KNOWLEDGE_STATUS_CONFIG,
 } as const;
 
 type StatusDomain = keyof typeof CONFIG_BY_DOMAIN;

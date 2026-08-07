@@ -12,7 +12,6 @@ export interface DefaultBrandProfileDef {
     ageRange: string;
     gender: string;
     roles: string[];
-    painPoints: string[];
   };
   toneOfVoice: string;
   doList: string[];
@@ -35,13 +34,6 @@ export const defaultBrandProfile: DefaultBrandProfileDef = {
     ageRange: '25-38',
     gender: 'Nữ',
     roles: ['Mẹ bỉm sữa', 'Người chăm sóc chính trong gia đình'],
-    painPoints: [
-      'Sợ chọn sai sữa/sản phẩm cho con',
-      'Con biếng ăn, táo bón, khó ngủ',
-      'Không biết tin nguồn thông tin nào',
-      'Lo mua phải hàng giả, hàng kém chất lượng',
-      'Ngân sách chi tiêu cho con có hạn',
-    ],
   },
   toneOfVoice:
     'Thân thiện, gần gũi, đáng tin cậy - như một người chị đã có kinh nghiệm nuôi con chia sẻ thật lòng. Không hù doạ, không phán xét mẹ, không dùng ngôn từ đao to búa lớn.',

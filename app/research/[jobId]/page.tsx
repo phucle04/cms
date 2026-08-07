@@ -12,10 +12,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/common/Ta
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
-import { formatRelativeTime, formatDateTime, formatCurrency } from '@/lib/format';
+import { formatRelativeTime, formatDateTime, formatCurrency, productName, productLinkId } from '@/lib/format';
 import { Skeleton } from '@/components/ui/skeleton';
 import { JobStageProgress } from '@/components/modules/research/JobStageProgress';
 import { HashtagSelectionPanel } from '@/components/modules/research/HashtagSelectionPanel';
+import { ComboSelectionPanel } from '@/components/modules/research/ComboSelectionPanel';
 import { TrendVideoCard } from '@/components/modules/research/TrendVideoCard';
 import { ResearchScriptCard } from '@/components/modules/research/ResearchScriptCard';
 import { useResearchJobStream } from '@/hooks/useResearchJobStream';
@@ -30,6 +31,7 @@ const PRE_SCRIPT_STATUSES: Types.ResearchJobStatus[] = [
   'scraping',
   'downloading',
   'analyzing',
+  'awaiting_combo_selection',
 ];
 // Job còn "sống" (chưa tới trạng thái cuối) - có thể bấm dừng ở bất kỳ bước nào trong số này.
 const STOPPABLE_STATUSES: Types.ResearchJobStatus[] = [
@@ -39,16 +41,13 @@ const STOPPABLE_STATUSES: Types.ResearchJobStatus[] = [
   'scraping',
   'downloading',
   'analyzing',
+  'awaiting_combo_selection',
   'generating_scripts',
 ];
 
-function productName(productId: Types.ResearchJob['productId']): string {
-  if (typeof productId === 'string') return productId;
-  return productId.name;
-}
-
-function productLinkId(productId: Types.ResearchJob['productId']): string {
-  return typeof productId === 'string' ? productId : productId.id;
+function formatVideoAgeLimit(months: number): string {
+  if (months % 12 === 0) return `${months / 12} năm`;
+  return `${months} tháng`;
 }
 
 function VideoGridSkeleton() {
@@ -80,6 +79,7 @@ export default function ResearchJobPage() {
   const jobId = params.jobId;
   const { job, trendVideos, scripts, loading, error, connectionMode, reload } = useResearchJobStream(jobId);
   const [submittingHashtags, setSubmittingHashtags] = useState(false);
+  const [submittingCombos, setSubmittingCombos] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
@@ -94,6 +94,19 @@ export default function ResearchJobPage() {
       toast.error(e instanceof Error ? e.message : 'Không chọn được hashtag');
     } finally {
       setSubmittingHashtags(false);
+    }
+  };
+
+  const handleSelectCombos = async (combos: Types.ResearchJobCombo[]) => {
+    setSubmittingCombos(true);
+    try {
+      await API.ResearchJobAPI.selectCombos(jobId, combos);
+      toast.success('Đã chọn combo, đang bắt đầu sinh kịch bản...');
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Không chọn được combo');
+    } finally {
+      setSubmittingCombos(false);
     }
   };
 
@@ -168,13 +181,18 @@ export default function ResearchJobPage() {
           </Link>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2 flex-wrap">
             Research:{' '}
-            <Link href={`/products/${productLinkId(job.productId)}`} className="hover:underline">
-              {productName(job.productId)}
-            </Link>
+            {productLinkId(job.productId) ? (
+              <Link href={`/products/${productLinkId(job.productId)}`} className="hover:underline">
+                {productName(job.productId)}
+              </Link>
+            ) : (
+              <span className="text-muted-foreground">{productName(job.productId)}</span>
+            )}
             <StatusBadge domain="researchJob" value={job.status} />
           </h1>
           <p className="text-sm text-muted-foreground mt-1" title={formatDateTime(job.createdAt)}>
             Chi phí ước tính: {formatCurrency(job.cost.totalEstimatedUsd)} · Tạo {formatRelativeTime(job.createdAt)}
+            {job.maxVideoAgeMonths ? ` · Chỉ quét video đăng trong ${formatVideoAgeLimit(job.maxVideoAgeMonths)} gần đây` : ''}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -247,6 +265,15 @@ export default function ResearchJobPage() {
           suggestedHashtags={job.suggestedHashtags}
           onSubmit={handleSelectHashtags}
           submitting={submittingHashtags}
+        />
+      )}
+
+      {job.status === 'awaiting_combo_selection' && (
+        <ComboSelectionPanel
+          trendStats={job.trendStats}
+          suggestedCombos={job.suggestedCombos}
+          onSubmit={handleSelectCombos}
+          submitting={submittingCombos}
         />
       )}
 

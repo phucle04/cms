@@ -6,9 +6,11 @@ import Trend from '../models/Trend';
 import VideoKPI from '../models/VideoKPI';
 import BrandProfile from '../models/BrandProfile';
 import PromptTemplate from '../models/PromptTemplate';
+import KnowledgeEntry from '../models/KnowledgeEntry';
 import { DEMO_USER_ID } from '../middleware/auth';
 import { defaultBrandProfile } from './defaults/brandProfile.default';
 import { defaultPromptTemplates } from './defaults/promptTemplates.default';
+import { defaultKnowledgeEntries } from './defaults/knowledgeEntries.default';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -38,12 +40,49 @@ const seedDefaults = async () => {
     );
     console.log(`Upserted default PromptTemplate: ${template.key} (${template._id})`);
   }
+
+  // 4 entry DISC nền tảng (D/I/S/C) - match theo discCode để idempotent,
+  // KHÔNG động vào usageCount/status nếu bản ghi đã tồn tại (người dùng có
+  // thể đã sửa nội dung/duyệt entry khác trong lúc dùng thật).
+  for (const def of defaultKnowledgeEntries) {
+    const entry = await KnowledgeEntry.findOneAndUpdate(
+      { userId: DEMO_USER_ID, storeType: def.storeType, discCode: def.discCode },
+      { $setOnInsert: { ...def, userId: DEMO_USER_ID, source: 'uploaded', status: 'approved', usageCount: 0 } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    console.log(`Upserted default KnowledgeEntry: ${entry.name} (${entry._id})`);
+  }
 };
 
+/**
+ * BUG THẬT (đã gây mất dữ liệu): trước đây `npm run seed` LUÔN xoá sạch
+ * User/ProductBrief/Idea/Trend/VideoKPI rồi tạo lại data demo (Coffee Maker,
+ * Fitness Tracker...) - nhưng đây cũng là lệnh duy nhất để cập nhật
+ * BrandProfile/PromptTemplate/KnowledgeEntry mặc định mỗi khi code default
+ * thay đổi (xem seedDefaults() ở trên). Người dùng chạy "npm run seed" tưởng
+ * chỉ để đồng bộ prompt template mặc định, nhưng vô tình xoá sạch sản
+ * phẩm/ý tưởng THẬT đang dùng. Giờ tách hẳn: "npm run seed" (mặc định) CHỈ
+ * chạy seedDefaults() - an toàn, idempotent, không đụng dữ liệu thật. Phần
+ * demo data (xoá + tạo lại) CHỈ chạy khi gọi RÕ RÀNG "npm run seed:demo"
+ * (truyền cờ --with-demo-data).
+ */
 const seedDatabase = async () => {
   try {
     await connectDB();
     console.log('Connected to database');
+
+    const withDemoData = process.argv.includes('--with-demo-data');
+
+    if (!withDemoData) {
+      console.log(
+        'Bỏ qua phần data demo (Coffee Maker/Fitness Tracker/Trend/KPI mẫu) - chỉ đồng bộ ' +
+          'BrandProfile/PromptTemplate/KnowledgeEntry mặc định, KHÔNG đụng tới sản phẩm/ý tưởng thật. ' +
+          'Chạy "npm run seed:demo" nếu thật sự muốn tạo lại data demo (sẽ XOÁ SẠCH ProductBrief/Idea/Trend/VideoKPI hiện có).'
+      );
+      await seedDefaults();
+      console.log('Đồng bộ default hoàn tất!');
+      process.exit(0);
+    }
 
     // Clear existing data
     await Promise.all([
@@ -147,31 +186,23 @@ const seedDatabase = async () => {
     const kpis = await VideoKPI.insertMany([
       {
         userId: user._id,
+        videoUrl: 'https://www.tiktok.com/@demo/video/1234567890',
         views: 125000,
         likes: 3450,
         comments: 890,
-        shares: 234,
-        watchTime: 2500,
-        retention: 68,
-        ctr: 4.2,
-        orders: 45,
-        revenue: 2250,
-        rank: 'S',
-        timestamp: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+        retentionRate: 68,
+        completionRate: 41,
+        postedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
       },
       {
         userId: user._id,
+        videoUrl: 'https://www.tiktok.com/@demo/video/1234567891',
         views: 45000,
         likes: 980,
         comments: 220,
-        shares: 56,
-        watchTime: 900,
-        retention: 52,
-        ctr: 2.1,
-        orders: 12,
-        revenue: 480,
-        rank: 'B',
-        timestamp: new Date(),
+        retentionRate: 52,
+        completionRate: 28,
+        postedAt: new Date(),
       },
     ]);
     console.log('Created sample KPIs:', kpis.length);

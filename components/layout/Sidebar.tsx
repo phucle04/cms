@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
+  BarChart3,
+  BookOpen,
   ChevronLeft,
   ChevronRight,
   FileText,
@@ -42,6 +44,16 @@ const navigation = [
     name: 'Kịch bản',
     href: '/scripts',
     icon: FileText,
+  },
+  {
+    name: 'Kiến thức',
+    href: '/knowledge',
+    icon: BookOpen,
+  },
+  {
+    name: 'KPI Video',
+    href: '/kpi',
+    icon: BarChart3,
   },
   {
     name: 'Cài đặt',

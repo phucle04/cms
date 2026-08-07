@@ -11,10 +11,18 @@ import {
   runResearchPipeline,
   resumeResearchPipeline,
   defaultEmit,
+  estimateResearchJobCost,
   type EmitFn,
 } from '../services/researchPipelineService';
 import { publishJobEvent, subscribeJobEvents } from '../utils/jobEventBus';
-import { DAILY_COST_CAP_USD, MAX_CONCURRENT_RESEARCH_JOBS } from '../config/env';
+import {
+  DAILY_COST_CAP_USD,
+  MAX_CONCURRENT_RESEARCH_JOBS,
+  DEFAULT_VIDEO_SCAN_COUNT,
+  MAX_VIDEO_SCAN_COUNT,
+  DEFAULT_SCRIPT_COUNT,
+  MAX_SCRIPT_COUNT,
+} from '../config/env';
 
 // Job coi là "đang chạy" nếu chưa tới trạng thái cuối (completed/failed) -
 // dùng để chặn job trùng (G6#8) + đếm giới hạn đồng thời (G7).
@@ -25,6 +33,7 @@ const ACTIVE_JOB_STATUSES: ResearchJobStatus[] = [
   'scraping',
   'downloading',
   'analyzing',
+  'awaiting_combo_selection',
   'generating_scripts',
 ];
 
@@ -60,7 +69,7 @@ function runPipelineInBackground(jobId: string, resume: boolean): void {
 // req.body đã qua validateBody(createResearchJobSchema) - productId chắc
 // chắn có mặt, không cần check lại ở đây.
 export const createResearchJob = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const { productId, autoSelectTop3 } = req.body;
+  const { productId, autoSelectTop3, videoScanCount, scriptCount, maxVideoAgeMonths } = req.body;
 
   const product = await ProductBrief.findOne({ _id: productId, userId: req.userId });
   if (!product) {
@@ -123,6 +132,14 @@ export const createResearchJob = asyncHandler(async (req: AuthRequest, res: Resp
     brandProfileId: brandProfile?._id,
     status: 'queued',
     autoSelectTop3: typeof autoSelectTop3 === 'boolean' ? autoSelectTop3 : true,
+    // videoScanCount/scriptCount đã được zod (createResearchJobSchema) chặn
+    // trong khoảng [1, MAX_*] nếu có truyền lên - undefined thì Mongoose tự
+    // áp default (DEFAULT_VIDEO_SCAN_COUNT/DEFAULT_SCRIPT_COUNT).
+    videoScanCount,
+    scriptCount,
+    // null/không truyền = không giới hạn tuổi video (mặc định, giữ hành vi
+    // cũ) - xem docstring maxVideoAgeMonths trong ResearchJob.ts.
+    maxVideoAgeMonths: typeof maxVideoAgeMonths === 'number' ? maxVideoAgeMonths : null,
   });
 
   runPipelineInBackground(job.id, false);
@@ -204,6 +221,63 @@ export const selectHashtags = asyncHandler(async (req: AuthRequest, res: Respons
   });
 });
 
+// req.body đã qua validateBody(selectCombosSchema) - selectedCombos chắc
+// chắn là mảng, không cần check lại hình dạng ở đây. Việc khớp ĐÚNG số lượng
+// với job.scriptCount là nghiệp vụ, kiểm ở đây (như cổng tuổi ở productController).
+export const selectCombos = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { selectedCombos } = req.body;
+
+  const job = await ResearchJob.findOne({ _id: req.params.id, userId: req.userId });
+  if (!job) {
+    throw new ApiError(404, 'Không tìm thấy research job');
+  }
+  if (job.status !== 'awaiting_combo_selection') {
+    throw new ApiError(
+      400,
+      `Job đang ở trạng thái "${job.status}", không phải "awaiting_combo_selection" - không thể chọn combo lúc này`
+    );
+  }
+  if (selectedCombos.length !== job.scriptCount) {
+    throw new ApiError(
+      400,
+      `Cần đúng ${job.scriptCount} combo (bằng scriptCount đã chọn lúc tạo job) - nhận được ${selectedCombos.length}`
+    );
+  }
+
+  job.selectedCombos = selectedCombos;
+  await job.save();
+
+  runPipelineInBackground(job.id, false);
+
+  res.json({
+    success: true,
+    data: { jobId: job.id, selectedCombos: job.selectedCombos },
+    message: 'Đã lưu combo đã chọn, pipeline tiếp tục chạy nền sinh kịch bản',
+  });
+});
+
+// GET /api/research/estimate-cost?videoScanCount=&scriptCount= - ước tính chi
+// phí THÔ trước khi tạo job, hiển thị ở modal xác nhận. Không cần auth chặt -
+// đây là phép tính thuần, không đọc/ghi gì của user cụ thể.
+export const getResearchJobCostEstimate = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const videoScanCountRaw = Number(req.query.videoScanCount);
+  const scriptCountRaw = Number(req.query.scriptCount);
+
+  const videoScanCount = Number.isFinite(videoScanCountRaw)
+    ? Math.min(Math.max(Math.round(videoScanCountRaw), 1), MAX_VIDEO_SCAN_COUNT)
+    : DEFAULT_VIDEO_SCAN_COUNT;
+  const scriptCount = Number.isFinite(scriptCountRaw)
+    ? Math.min(Math.max(Math.round(scriptCountRaw), 1), MAX_SCRIPT_COUNT)
+    : DEFAULT_SCRIPT_COUNT;
+
+  const estimate = estimateResearchJobCost(videoScanCount, scriptCount);
+
+  res.json({
+    success: true,
+    data: { videoScanCount, scriptCount, ...estimate },
+  });
+});
+
 export const retryResearchJob = asyncHandler(async (req: AuthRequest, res: Response) => {
   const job = await ResearchJob.findOne({ _id: req.params.id, userId: req.userId });
   if (!job) {
@@ -227,13 +301,18 @@ const TERMINAL_JOB_STATUSES: ResearchJobStatus[] = ['completed', 'failed', 'canc
 
 // Trạng thái "tạm dừng chờ" - KHÔNG có pipeline nào đang chạy nền tại thời
 // điểm này (queued chỉ tồn tại trong khoảnh khắc trước khi
-// runPipelineInBackground được gọi; awaiting_hashtag_selection dừng hẳn chờ
-// người dùng chọn hashtag) - set cancelRequested=true sẽ KHÔNG có gì bắt được
-// cờ này cho tới khi người dùng vô tình kích hoạt lại (vd chọn hashtag), lúc
-// đó pipeline sẽ tự huỷ ngay ở Stage 1 nhưng UI sẽ hiện nhầm thông báo
-// "đang chạy" trong lúc đó. Để UX rõ ràng ngay lập tức, 2 trạng thái này
-// được set status='cancelled' NGAY tại đây thay vì chỉ set cờ chờ.
-const PAUSED_NO_ACTIVE_PIPELINE_STATUSES: ResearchJobStatus[] = ['queued', 'awaiting_hashtag_selection'];
+// runPipelineInBackground được gọi; awaiting_hashtag_selection/
+// awaiting_combo_selection dừng hẳn chờ người dùng chọn) - set
+// cancelRequested=true sẽ KHÔNG có gì bắt được cờ này cho tới khi người dùng
+// vô tình kích hoạt lại (vd chọn hashtag/combo), lúc đó pipeline sẽ tự huỷ
+// ngay ở stage đầu nhưng UI sẽ hiện nhầm thông báo "đang chạy" trong lúc đó.
+// Để UX rõ ràng ngay lập tức, các trạng thái này được set status='cancelled'
+// NGAY tại đây thay vì chỉ set cờ chờ.
+const PAUSED_NO_ACTIVE_PIPELINE_STATUSES: ResearchJobStatus[] = [
+  'queued',
+  'awaiting_hashtag_selection',
+  'awaiting_combo_selection',
+];
 
 export const cancelResearchJob = asyncHandler(async (req: AuthRequest, res: Response) => {
   const job = await ResearchJob.findOne({ _id: req.params.id, userId: req.userId });

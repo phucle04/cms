@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dedupeSortAndTakeTop, normalizeToTrendVideo, TikTokService } from './tiktokService';
+import {
+  computeMaxAgeCutoffDate,
+  dedupeSortAndTakeTop,
+  filterByMinCreateTime,
+  normalizeToTrendVideo,
+  TikTokService,
+} from './tiktokService';
 import type { ApifyTikTokResult } from '../types/apify';
 
 /**
@@ -106,6 +112,61 @@ test('dedupeSortAndTakeTop: item thiếu id hoặc rỗng bị bỏ qua', () => 
   const result = dedupeSortAndTakeTop(items, 10);
   assert.equal(result.length, 1);
   assert.equal(result[0].id, 'ok');
+});
+
+// ============================================================
+// computeMaxAgeCutoffDate / filterByMinCreateTime (lọc video theo tuổi)
+// ============================================================
+
+test('computeMaxAgeCutoffDate: null/0/âm -> không giới hạn (null)', () => {
+  const now = new Date('2026-07-31T00:00:00.000Z');
+  assert.equal(computeMaxAgeCutoffDate(null, now), null);
+  assert.equal(computeMaxAgeCutoffDate(undefined, now), null);
+  assert.equal(computeMaxAgeCutoffDate(0, now), null);
+  assert.equal(computeMaxAgeCutoffDate(-6, now), null);
+});
+
+test('computeMaxAgeCutoffDate: trừ đúng số tháng từ "now"', () => {
+  const now = new Date('2026-07-31T00:00:00.000Z');
+  const sixMonths = computeMaxAgeCutoffDate(6, now);
+  assert.equal(sixMonths?.toISOString(), '2026-01-31T00:00:00.000Z');
+
+  const oneYear = computeMaxAgeCutoffDate(12, now);
+  assert.equal(oneYear?.toISOString(), '2025-07-31T00:00:00.000Z');
+});
+
+test('filterByMinCreateTime: cutoffDate=null -> giữ nguyên tất cả (kể cả thiếu ngày)', () => {
+  const items = [makeVideo({ id: 'v1', createTimeISO: '2020-01-01T00:00:00.000Z' }), makeVideo({ id: 'v2', createTimeISO: '' })];
+  const result = filterByMinCreateTime(items, null);
+  assert.equal(result.length, 2);
+});
+
+test('filterByMinCreateTime: loại video cũ hơn cutoff, giữ video mới hơn/bằng cutoff', () => {
+  const cutoff = new Date('2026-01-01T00:00:00.000Z');
+  const items = [
+    makeVideo({ id: 'old', createTimeISO: '2025-01-01T00:00:00.000Z' }),
+    makeVideo({ id: 'exact', createTimeISO: '2026-01-01T00:00:00.000Z' }),
+    makeVideo({ id: 'new', createTimeISO: '2026-06-01T00:00:00.000Z' }),
+  ];
+  const result = filterByMinCreateTime(items, cutoff);
+  assert.deepEqual(
+    result.map((v) => v.id),
+    ['exact', 'new']
+  );
+});
+
+test('filterByMinCreateTime: loại video thiếu hoặc không parse được createTimeISO (quyết định đã chốt: thiếu ngày = loại)', () => {
+  const cutoff = new Date('2026-01-01T00:00:00.000Z');
+  const items = [
+    makeVideo({ id: 'missing', createTimeISO: '' }),
+    makeVideo({ id: 'invalid', createTimeISO: 'không-phải-ngày' }),
+    makeVideo({ id: 'ok', createTimeISO: '2026-06-01T00:00:00.000Z' }),
+  ];
+  const result = filterByMinCreateTime(items, cutoff);
+  assert.deepEqual(
+    result.map((v) => v.id),
+    ['ok']
+  );
 });
 
 // ============================================================

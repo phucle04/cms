@@ -75,8 +75,8 @@ export class AIService {
    * Build prompt for idea generation with complete product context.
    *
    * NOTE: this only references fields that actually exist on IProductBrief
-   * (name, category, usp, painPoints, faqContent, socialProof,
-   * shootingTips, keywords). If you want the model to genuinely analyze
+   * (name, category, usp, painPoints, faqContent, keywords). If you want
+   * the model to genuinely analyze
    * competitor transcripts or a defined Brand Voice / Customer Persona,
    * those need to be real fields on IProductBrief and passed in here -
    * otherwise the model is just inventing them, which is misleading.
@@ -92,8 +92,6 @@ export class AIService {
     if (product.usp) parts.push(`- USP: ${product.usp}`);
     if (product.painPoints) parts.push(`- Pain Points: ${product.painPoints}`);
     if (product.faqContent) parts.push(`- FAQ: ${product.faqContent}`);
-    if (product.socialProof) parts.push(`- Social Proof: ${product.socialProof}`);
-    if (product.shootingTips) parts.push(`- Shooting Tips: ${product.shootingTips}`);
     if (product.keywords && product.keywords.length > 0) {
       parts.push(`- Keywords: ${product.keywords.join(', ')}`);
     }

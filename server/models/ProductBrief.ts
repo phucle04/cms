@@ -7,11 +7,19 @@ export interface IProductBrief extends Document {
   usp: string;
   painPoints: string;
   faqContent?: string;
-  socialProof?: string;
-  comparison?: string;
-  shootingTips?: string;
-  mediaUrl?: string;
   keywords?: string[];
+  // Các trường bổ sung (thay cho bảng "Thông tin sản phẩm" trong prompt kịch
+  // bản livestream) để AI viết kịch bản video short CHÍNH XÁC thay vì tự bịa
+  // đối tượng dùng/liều dùng/giá - đặc biệt quan trọng với ngành mẹ & bé vì
+  // sai liều dùng/độ tuổi là vi phạm Nghị định 100/2014/NĐ-CP.
+  targetAudience?: string;
+  usageInstructions?: string;
+  originCountry?: string;
+  certifications?: string;
+  price?: number;
+  promoPrice?: number;
+  promotionOffer?: string;
+  safetyNotes?: string;
   status: 'active' | 'archived';
   // Cổng tuân thủ (Giai đoạn 5, G6a): sản phẩm dinh dưỡng cho trẻ dưới 24
   // tháng tuổi chịu quy định quảng cáo riêng (Nghị định 100/2014/NĐ-CP) -
@@ -30,11 +38,15 @@ const productBriefSchema = new Schema<IProductBrief>(
     usp: { type: String, required: true },
     painPoints: String,
     faqContent: String,
-    socialProof: String,
-    comparison: String,
-    shootingTips: String,
-    mediaUrl: String,
     keywords: [String],
+    targetAudience: String,
+    usageInstructions: String,
+    originCountry: String,
+    certifications: String,
+    price: Number,
+    promoPrice: Number,
+    promotionOffer: String,
+    safetyNotes: String,
     status: { type: String, enum: ['active', 'archived'], default: 'active' },
     ageCategory: { type: String, enum: ['under_24m', '24m_plus', 'not_applicable'] },
   },

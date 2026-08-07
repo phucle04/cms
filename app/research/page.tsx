@@ -9,15 +9,10 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
-import { formatRelativeTime, formatDateTime, formatCurrency } from '@/lib/format';
+import { formatRelativeTime, formatDateTime, formatCurrency, productName } from '@/lib/format';
 import { Skeleton } from '@/components/ui/skeleton';
 import * as API from '@/lib/api';
 import * as Types from '@/lib/types';
-
-function productName(productId: Types.ResearchJob['productId']): string {
-  if (typeof productId === 'string') return productId;
-  return productId.name;
-}
 
 export default function ResearchHistoryPage() {
   const [jobs, setJobs] = useState<Types.ResearchJob[]>([]);

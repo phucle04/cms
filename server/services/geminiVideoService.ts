@@ -167,6 +167,14 @@ export interface VideoAnalysisContext {
   playCount: number;
   diggCount: number;
   transcript?: string;
+  // Danh sách hook/pain point ĐÃ DUYỆT (đã format sẵn dạng "- [id=...] tên: mô
+  // tả") để Gemini chọn ID khớp nhất thay vì tự bịa - xem knowledgeMatchService.ts.
+  hookLibrary: string;
+  painPointLibrary: string;
+  // Giai đoạn 6 Phase 6: đưa CẢ vào path phân tích video thật (trước đây chỉ
+  // path text-only mới có) - cần để Gemini có nguồn trích verbatim cho
+  // valueComments (kho "value comment" tái dùng cho sản phẩm khác sau này).
+  topComments: Array<{ text: string; likeCount: number; authorHandle: string }>;
 }
 
 export interface TextOnlyAnalysisContext {
@@ -174,6 +182,13 @@ export interface TextOnlyAnalysisContext {
   hashtags: string[];
   topComments: Array<{ text: string; likeCount: number; authorHandle: string }>;
   subtitles?: string;
+  hookLibrary: string;
+  painPointLibrary: string;
+}
+
+function formatTopCommentsForPrompt(topComments: Array<{ text: string; likeCount: number; authorHandle: string }>): string {
+  if (!topComments || topComments.length === 0) return '(không có bình luận)';
+  return topComments.map((c) => `- ${c.authorHandle || 'ẩn danh'}: "${c.text}" (${c.likeCount} like)`).join('\n');
 }
 
 // JSON schema (OpenAPI-subset) ép Gemini trả structured output theo đúng
@@ -218,8 +233,44 @@ const GEMINI_VIDEO_ANALYSIS_RESPONSE_SCHEMA = {
     viralHypothesis: { type: 'string' },
     cta: { type: 'string' },
     transcript: { type: 'string' },
+    knowledgeMatch: {
+      type: 'object',
+      properties: {
+        hookEntryId: { type: 'string' },
+        hookNewName: { type: 'string' },
+        hookNewDescription: { type: 'string' },
+        hookNewExample: { type: 'string' },
+        painPointEntryId: { type: 'string' },
+        painPointNewName: { type: 'string' },
+        painPointNewDescription: { type: 'string' },
+        painPointNewExample: { type: 'string' },
+        discCode: { type: 'string' },
+      },
+      required: [
+        'hookEntryId',
+        'hookNewName',
+        'hookNewDescription',
+        'hookNewExample',
+        'painPointEntryId',
+        'painPointNewName',
+        'painPointNewDescription',
+        'painPointNewExample',
+        'discCode',
+      ],
+    },
+    valueComments: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          text: { type: 'string' },
+          reason: { type: 'string' },
+        },
+        required: ['text', 'reason'],
+      },
+    },
   },
-  required: ['hook', 'structure', 'production', 'viralHypothesis', 'cta', 'transcript'],
+  required: ['hook', 'structure', 'production', 'viralHypothesis', 'cta', 'transcript', 'knowledgeMatch', 'valueComments'],
 } as const;
 
 function fillTemplate(template: string, values: Record<string, string | number>): string {
@@ -335,6 +386,9 @@ export async function analyzeVideo(params: {
       playCount: context.playCount,
       diggCount: context.diggCount,
       transcript: context.transcript || '(không có transcript)',
+      hookLibrary: context.hookLibrary,
+      painPointLibrary: context.painPointLibrary,
+      topComments: formatTopCommentsForPrompt(context.topComments),
     });
 
     const { text: raw, usage } = await callGeminiStructured({
@@ -371,15 +425,13 @@ export async function analyzeFromTextOnly(params: {
     playCount: '(không rõ - không tải được video)',
     diggCount: '(không rõ - không tải được video)',
     transcript: context.subtitles || '(không có transcript/phụ đề)',
+    hookLibrary: context.hookLibrary,
+    painPointLibrary: context.painPointLibrary,
+    topComments: formatTopCommentsForPrompt(context.topComments),
   });
 
   const extraContext = [
     `Hashtag: ${context.hashtags.length > 0 ? context.hashtags.join(', ') : '(không có)'}`,
-    context.topComments.length > 0
-      ? `Bình luận nổi bật:\n${context.topComments
-          .map((c) => `- ${c.authorHandle || 'ẩn danh'}: "${c.text}" (${c.likeCount} like)`)
-          .join('\n')}`
-      : 'Bình luận nổi bật: (không có)',
     'LƯU Ý QUAN TRỌNG: Không có file video để xem - chỉ có caption, hashtag, bình luận, và transcript/phụ đề (nếu có). Với các field chỉ có thể suy luận được từ hình ảnh thực tế của video (visualHook, production.shotTypes, production.lighting, production.props, production.textOnScreen), hãy để TRỐNG (chuỗi rỗng "" hoặc mảng rỗng []) thay vì bịa đặt.',
   ].join('\n\n');
 

@@ -16,6 +16,9 @@ const STEPS: { key: Types.ResearchJobStatus; label: string }[] = [
 function stepIndexForStatus(status: Types.ResearchJobStatus): number {
   if (status === 'queued') return -1;
   if (status === 'awaiting_hashtag_selection') return 0;
+  // Dừng NGAY SAU khi phân tích xong (index của 'analyzing'), TRƯỚC khi sinh
+  // kịch bản - chờ người dùng chọn combo hook/pain point/DISC.
+  if (status === 'awaiting_combo_selection') return STEPS.findIndex((s) => s.key === 'analyzing');
   if (status === 'completed') return STEPS.length;
   const idx = STEPS.findIndex((s) => s.key === status);
   return idx === -1 ? -1 : idx;
@@ -40,7 +43,7 @@ export function JobStageProgress({
 }: JobStageProgressProps) {
   const failed = status === 'failed';
   const cancelled = status === 'cancelled';
-  const paused = status === 'awaiting_hashtag_selection';
+  const paused = status === 'awaiting_hashtag_selection' || status === 'awaiting_combo_selection';
   const currentIndex = failed
     ? STEPS.findIndex((s) => s.key === errorStage)
     : cancelled

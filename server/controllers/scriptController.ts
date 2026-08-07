@@ -12,21 +12,50 @@ async function getActiveDontList(userId: string): Promise<string[]> {
   return brandProfile?.dontList ?? [];
 }
 
+// GET /api/scripts?ideaId=&status=&q=&page=&limit= - `page`/`limit` TUỲ CHỌN:
+// không truyền thì trả TOÀN BỘ (data thô, không có `pagination`) để tương
+// thích ngược với các nơi gọi cũ cần load hết (VD build map job<->script ở
+// trang /scripts, hoặc ComboSelectionPanel...). Truyền page/limit thì trả
+// kèm object `pagination` giống hệt listResearchJobs.
 export const getScripts = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const { ideaId, status } = req.query;
+  const { ideaId, status, q } = req.query;
   const filter: Record<string, unknown> = { userId: req.userId };
   if (ideaId) filter.ideaId = ideaId;
   if (status) filter.status = status;
+  if (q && typeof q === 'string' && q.trim()) {
+    filter.title = { $regex: q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+  }
+
+  const dontList = await getActiveDontList(req.userId!);
+  const withComplianceFlags = (scripts: InstanceType<typeof Script>[]) =>
+    scripts.map((script) => ({
+      ...script.toJSON(),
+      complianceFlags: scanScriptCompliance(script.content, dontList),
+    }));
+
+  if (req.query.page || req.query.limit) {
+    const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? '20'), 10) || 20));
+
+    const [scripts, total] = await Promise.all([
+      Script.find(filter)
+        .populate('ideaId')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      Script.countDocuments(filter),
+    ]);
+
+    res.json({
+      success: true,
+      data: withComplianceFlags(scripts),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+    return;
+  }
 
   const scripts = await Script.find(filter).populate('ideaId').sort({ createdAt: -1 });
-  const dontList = await getActiveDontList(req.userId!);
-
-  const data = scripts.map((script) => ({
-    ...script.toJSON(),
-    complianceFlags: scanScriptCompliance(script.content, dontList),
-  }));
-
-  res.json({ success: true, data });
+  res.json({ success: true, data: withComplianceFlags(scripts) });
 });
 
 export const getScript = asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -70,6 +99,16 @@ export const updateScript = asyncHandler(async (req: AuthRequest, res: Response)
   });
 
   res.json({ success: true, data: script, message: 'Script updated' });
+});
+
+// req.body đã qua validateBody(bulkUpdateScriptsSchema) - ids/status chắc
+// chắn hợp lệ, không cần check lại ở đây (cùng pattern bulkUpdateIdeas).
+export const bulkUpdateScripts = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { ids, status } = req.body;
+
+  await Script.updateMany({ _id: { $in: ids }, userId: req.userId }, { status });
+
+  res.json({ success: true, message: `Đã cập nhật ${ids.length} kịch bản` });
 });
 
 export const deleteScript = asyncHandler(async (req: AuthRequest, res: Response) => {
