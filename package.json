@@ -72,6 +72,9 @@
   "pnpm": {
     "overrides": {
       "hono": "4.12.25"
-    }
+    },
+    "onlyBuiltDependencies": [
+      "youtube-dl-exec"
+    ]
   }
 }
